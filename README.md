@@ -8,19 +8,23 @@ A self-hosted travel planner for organizing trips, places, budgets, packing list
 
 ## Features
 
-- **Drag & Drop Planner** — Organize places into day plans with drag & drop
-- **Google Maps Integration** — Search and auto-fill place details
-- **Budget Tracking** — Track expenses per trip with pie chart overview
-- **Packing Lists** — Grouped lists with progress tracking and suggestions
-- **Photo Gallery** — Upload and manage trip photos
-- **File Storage** — Attach documents, tickets, and PDFs to trips
-- **Reservations** — Track booking status and details
-- **Weather** — Weather forecasts for your destinations
-- **PDF Export** — Export trip plans as PDF
-- **Multi-User** — Invite members to collaborate on trips
-- **Admin Panel** — User management, backups, and app settings
-- **Dark Mode** — Full light/dark theme support
-- **i18n** — English and German
+- **Drag & Drop Planner** — Organize places into day plans with drag & drop reordering
+- **Interactive Map** — Leaflet map with place markers, route visualization, and customizable tile sources
+- **Google Places Search** — Search and auto-fill place details including ratings, reviews, and opening hours (requires API key)
+- **Weather Forecasts** — Current weather and 5-day forecasts for your destinations (requires API key)
+- **Budget Tracking** — Category-based expenses with pie chart, per-person/per-day splitting, and multi-currency support
+- **Packing Lists** — Grouped checklists with progress tracking, drag & drop reordering, and smart suggestions
+- **Reservations** — Track booking status, confirmation numbers, and reservation details
+- **File Storage** — Attach documents, tickets, and PDFs to your trips (up to 50 MB per file)
+- **Photo Gallery** — Upload and manage trip photos with lightbox view
+- **PDF Export** — Export complete trip plans as PDF
+- **Multi-User** — Invite members to collaborate on shared trips
+- **Day Notes** — Add notes to individual days
+- **Admin Panel** — User management, global categories, API key configuration, and backups
+- **Auto-Backups** — Scheduled backups with configurable interval and retention
+- **Dark Mode** — Full light and dark theme support
+- **Multilingual** — English and German (i18n)
+- **Customizable** — Temperature units, time format (12h/24h), map tile sources, default coordinates
 
 ## Tech Stack
 
@@ -28,7 +32,8 @@ A self-hosted travel planner for organizing trips, places, budgets, packing list
 - **Frontend**: React 18 + Vite + Tailwind CSS
 - **State**: Zustand
 - **Auth**: JWT
-- **Maps**: Leaflet + Google Places API
+- **Maps**: Leaflet + Google Places API (optional)
+- **Weather**: OpenWeatherMap API (optional)
 - **Icons**: lucide-react
 
 ## Deployment with Docker
@@ -36,7 +41,6 @@ A self-hosted travel planner for organizing trips, places, budgets, packing list
 ### Prerequisites
 
 - Docker & Docker Compose
-- A Google Maps API key (optional, for place search)
 
 ### 1. Clone the repository
 
@@ -47,17 +51,13 @@ cd NOMAD
 
 ### 2. Configure environment
 
-```bash
-cp server/.env.example .env
-```
-
-Edit the `.env` or set variables in `docker-compose.yml`:
-
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `JWT_SECRET` | Yes | Secret key for JWT signing (min. 32 characters) |
+| `JWT_SECRET` | **Yes** (production) | Secret key for JWT signing (min. 32 characters). Auto-generated in development. |
 | `ALLOWED_ORIGINS` | No | Comma-separated list of allowed origins (default: `http://localhost:3000`) |
 | `PORT` | No | Server port (default: `3000`) |
+
+Set these in `docker-compose.yml` under `environment`.
 
 ### 3. Start the app
 
@@ -65,11 +65,11 @@ Edit the `.env` or set variables in `docker-compose.yml`:
 docker compose up -d --build
 ```
 
-The app is now running. Open your browser and navigate to your server's IP or domain on port `3000`.
+The app is now running on port `3000`.
 
 ### 4. First setup
 
-The first user to register automatically becomes the **admin**. No default credentials — you create your own account.
+The **first user to register** automatically becomes the admin. No default credentials.
 
 ### Updating
 
@@ -82,9 +82,9 @@ Your data is persisted in the `./data` and `./uploads` volumes.
 
 ### Reverse Proxy (recommended)
 
-For production, put NOMAD behind a reverse proxy (Nginx, Caddy, Traefik) with HTTPS.
+For production, put NOMAD behind a reverse proxy with HTTPS (e.g. Nginx, Caddy, Traefik).
 
-Example with **Caddy** (`Caddyfile`):
+Example with **Caddy**:
 
 ```
 nomad.yourdomain.com {
@@ -99,19 +99,29 @@ environment:
   - ALLOWED_ORIGINS=https://nomad.yourdomain.com
 ```
 
-## Google Maps API Setup
+## Optional API Keys
+
+API keys are configured in the **Admin Panel** after login.
+
+### Google Maps (Place Search)
 
 1. Go to [Google Cloud Console](https://console.cloud.google.com/)
 2. Create a project and enable the **Places API (New)**
 3. Create an API key under Credentials
-4. In NOMAD: Admin Panel → API Keys → enter your key
+4. In NOMAD: Admin Panel → API Keys → Google Maps
+
+### OpenWeatherMap (Weather Forecasts)
+
+1. Sign up at [OpenWeatherMap](https://openweathermap.org/api)
+2. Get a free API key
+3. In NOMAD: Admin Panel → API Keys → OpenWeatherMap
 
 ## Data & Backups
 
 - **Database**: SQLite, stored in `./data/travel.db`
 - **Uploads**: Stored in `./uploads/`
-- **Backups**: Can be created and managed in the Admin Panel
-- **Auto-Backups**: Configurable schedule in Admin Panel
+- **Backups**: Create and restore via Admin Panel
+- **Auto-Backups**: Configurable schedule and retention in Admin Panel
 
 ## License
 
