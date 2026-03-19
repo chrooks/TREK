@@ -92,7 +92,25 @@ export default function TripFormModal({ isOpen, onClose, onSave, trip, onCoverUp
     }
   }
 
-  const update = (field, value) => setFormData(prev => ({ ...prev, [field]: value }))
+  const update = (field, value) => setFormData(prev => {
+    const next = { ...prev, [field]: value }
+    // Auto-adjust end date when start date changes
+    if (field === 'start_date' && value) {
+      if (!prev.end_date || prev.end_date < value) {
+        // If no end date or end date is before new start, set end = start
+        next.end_date = value
+      } else if (prev.start_date) {
+        // Preserve trip duration: shift end date by same delta
+        const oldStart = new Date(prev.start_date + 'T00:00:00')
+        const oldEnd = new Date(prev.end_date + 'T00:00:00')
+        const duration = Math.round((oldEnd - oldStart) / 86400000)
+        const newEnd = new Date(value + 'T00:00:00')
+        newEnd.setDate(newEnd.getDate() + duration)
+        next.end_date = newEnd.toISOString().split('T')[0]
+      }
+    }
+    return next
+  })
 
   const inputCls = "w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-300 focus:border-transparent text-sm"
 

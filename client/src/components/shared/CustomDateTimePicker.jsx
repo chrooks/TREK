@@ -73,11 +73,26 @@ export function CustomDatePicker({ value, onChange, placeholder, style = {} }) {
       {open && ReactDOM.createPortal(
         <div ref={dropRef} style={{
           position: 'fixed',
-          top: (() => { const r = ref.current?.getBoundingClientRect(); return r ? r.bottom + 4 : 0 })(),
-          left: (() => { const r = ref.current?.getBoundingClientRect(); return r ? r.left : 0 })(),
+          ...(() => {
+            const r = ref.current?.getBoundingClientRect()
+            if (!r) return { top: 0, left: 0 }
+            const w = 268, pad = 8
+            const vw = window.innerWidth
+            const vh = window.innerHeight
+            let left = r.left
+            let top = r.bottom + 4
+            // Keep within viewport horizontally
+            if (left + w > vw - pad) left = Math.max(pad, vw - w - pad)
+            // If not enough space below, open above
+            if (top + 320 > vh) top = Math.max(pad, r.top - 320)
+            // On very small screens, center horizontally
+            if (vw < 360) left = Math.max(pad, (vw - w) / 2)
+            return { top, left }
+          })(),
           zIndex: 99999,
           background: 'var(--bg-card)', border: '1px solid var(--border-primary)',
           borderRadius: 14, boxShadow: '0 8px 32px rgba(0,0,0,0.12)', padding: 12, width: 268,
+          maxWidth: 'calc(100vw - 16px)',
           animation: 'selectIn 0.15s ease-out',
           backdropFilter: 'blur(24px)', WebkitBackdropFilter: 'blur(24px)',
         }}>
