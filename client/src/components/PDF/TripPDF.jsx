@@ -356,36 +356,10 @@ ${daysHtml}
 
 </body></html>`
 
-  // Open print window
-  const overlay = document.createElement('div')
-  overlay.id = 'pdf-preview-overlay'
-  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:9999;display:flex;align-items:center;justify-content:center;padding:8px;'
-  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove() }
-
-  const card = document.createElement('div')
-  card.style.cssText = 'width:100%;max-width:1000px;height:95vh;background:var(--bg-card);border-radius:12px;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,0.3);'
-
-  const header = document.createElement('div')
-  header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:10px 16px;border-bottom:1px solid var(--border-primary);flex-shrink:0;'
-  header.innerHTML = `
-    <span style="font-size:13px;font-weight:600;color:var(--text-primary)">${escHtml(trip?.name || tr('pdf.travelPlan'))}</span>
-    <div style="display:flex;align-items:center;gap:8px">
-      <button id="pdf-print-btn" style="display:flex;align-items:center;gap:5px;font-size:12px;font-weight:500;color:var(--text-muted);background:none;border:none;cursor:pointer;padding:4px 8px;border-radius:6px;font-family:inherit">${tr('pdf.saveAsPdf')}</button>
-      <button id="pdf-close-btn" style="background:none;border:none;cursor:pointer;color:var(--text-faint);display:flex;padding:4px;border-radius:6px">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-      </button>
-    </div>
-  `
-
-  const iframe = document.createElement('iframe')
-  iframe.style.cssText = 'flex:1;width:100%;border:none;'
-  iframe.srcdoc = html
-
-  card.appendChild(header)
-  card.appendChild(iframe)
-  overlay.appendChild(card)
-  document.body.appendChild(overlay)
-
-  header.querySelector('#pdf-close-btn').onclick = () => overlay.remove()
-  header.querySelector('#pdf-print-btn').onclick = () => { iframe.contentWindow?.print() }
+  // Open in new window
+  const win = window.open('', '_blank')
+  if (win) {
+    win.document.write(html)
+    win.document.close()
+  }
 }

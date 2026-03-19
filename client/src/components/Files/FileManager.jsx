@@ -165,11 +165,16 @@ export default function FileManager({ files = [], onUpload, onDelete, onUpdate, 
                 </button>
               </div>
             </div>
-            <iframe
-              src={`${previewFile.url || `/uploads/files/${previewFile.filename}`}#view=FitH`}
+            <object
+              data={`${previewFile.url || `/uploads/files/${previewFile.filename}`}#view=FitH`}
+              type="application/pdf"
               style={{ flex: 1, width: '100%', border: 'none' }}
               title={previewFile.original_name}
-            />
+            >
+              <p style={{ padding: 24, textAlign: 'center', color: 'var(--text-muted)' }}>
+                <a href={previewFile.url || `/uploads/files/${previewFile.filename}`} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--text-primary)', textDecoration: 'underline' }}>PDF herunterladen</a>
+              </p>
+            </object>
           </div>
         </div>
       )}
