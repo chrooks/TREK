@@ -39,19 +39,43 @@ export function updateJwtSecret(newSecret: string): void {
 // Keeping it separate from JWT_SECRET means you can rotate session tokens without
 // invalidating all stored encrypted data, and vice-versa.
 //
-// Upgrade note: if you already have encrypted data stored under a previous build
-// that used JWT_SECRET for encryption, set ENCRYPTION_KEY to the value of your
-// old JWT_SECRET so existing encrypted values continue to decrypt correctly.
-// After re-saving all credentials via the admin panel you can switch to a new
-// random ENCRYPTION_KEY.
-const ENCRYPTION_KEY: string = process.env.ENCRYPTION_KEY || '';
+// Resolution order:
+//   1. ENCRYPTION_KEY env var — explicit, always takes priority.
+//   2. data/.jwt_secret — used automatically for existing installs that upgrade
+//      without setting ENCRYPTION_KEY; encrypted data stays readable with no
+//      manual intervention required.
+//   3. data/.encryption_key — auto-generated and persisted on first start of a
+//      fresh install where neither of the above is available.
+let _encryptionKey: string = process.env.ENCRYPTION_KEY || '';
 
-if (!ENCRYPTION_KEY) {
-  console.error('FATAL: ENCRYPTION_KEY is not set.');
-  console.error('If this occurs after an update, set ENCRYPTION_KEY to the value of your old JWT secret.');
-  console.error('Your JWT secret is stored in data/.jwt_secret (host path: ./data/.jwt_secret).');
-  console.error('For a fresh install, generate a random key: openssl rand -hex 32');
-  process.exit(1);
+if (!_encryptionKey) {
+  // Fallback 1: existing install — reuse the JWT secret so previously encrypted
+  // values remain readable after an upgrade.
+  try {
+    _encryptionKey = fs.readFileSync(jwtSecretFile, 'utf8').trim();
+    console.warn('WARNING: ENCRYPTION_KEY is not set. Falling back to JWT secret for at-rest encryption.');
+    console.warn('Set ENCRYPTION_KEY explicitly to decouple encryption from JWT signing (recommended).');
+  } catch {
+    // JWT secret not found — must be a fresh install, fall through.
+  }
 }
 
-export { ENCRYPTION_KEY };
+if (!_encryptionKey) {
+  // Fallback 2: fresh install — auto-generate a dedicated key.
+  const encKeyFile = path.join(dataDir, '.encryption_key');
+  try {
+    _encryptionKey = fs.readFileSync(encKeyFile, 'utf8').trim();
+  } catch {
+    _encryptionKey = crypto.randomBytes(32).toString('hex');
+    try {
+      if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+      fs.writeFileSync(encKeyFile, _encryptionKey, { mode: 0o600 });
+      console.log('Generated and saved encryption key to', encKeyFile);
+    } catch (writeErr: unknown) {
+      console.warn('WARNING: Could not persist encryption key to disk:', writeErr instanceof Error ? writeErr.message : writeErr);
+      console.warn('Set ENCRYPTION_KEY env var to avoid losing access to encrypted secrets on restart.');
+    }
+  }
+}
+
+export const ENCRYPTION_KEY = _encryptionKey;

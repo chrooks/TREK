@@ -117,13 +117,6 @@ TREK works as a Progressive Web App — no App Store needed:
 <details>
 <summary>Docker Compose (recommended for production)</summary>
 
-First, create a `.env` file next to your `docker-compose.yml`:
-
-```bash
-# Generate a random encryption key (required)
-echo "ENCRYPTION_KEY=$(openssl rand -hex 32)" >> .env
-```
-
 ```yaml
 services:
   app:
@@ -145,7 +138,7 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=3000
-      - ENCRYPTION_KEY=${ENCRYPTION_KEY} # Required — see .env setup above
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-} # Recommended. Generate with: openssl rand -hex 32. If unset, falls back to data/.jwt_secret (existing installs) or auto-generates a key (fresh installs).
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-} # Comma-separated origins for CORS and email notification links
       - TZ=${TZ:-UTC} # Timezone for logs, reminders and scheduled tasks (e.g. Europe/Berlin)
       - LOG_LEVEL=${LOG_LEVEL:-info} # info = concise user actions; debug = verbose admin-level details
@@ -267,7 +260,7 @@ trek.yourdomain.com {
 | **Core** | | |
 | `PORT` | Server port | `3000` |
 | `NODE_ENV` | Environment (`production` / `development`) | `production` |
-| `ENCRYPTION_KEY` | **Required.** At-rest encryption key for stored secrets (API keys, MFA, SMTP, OIDC). Generate with `openssl rand -hex 32`. **Upgrading:** set to the contents of `./data/.jwt_secret` to keep existing encrypted data readable. | — |
+| `ENCRYPTION_KEY` | At-rest encryption key for stored secrets (API keys, MFA, SMTP, OIDC). Recommended: generate with `openssl rand -hex 32`. If unset, falls back to `data/.jwt_secret` (existing installs) or auto-generates a key (fresh installs). | Auto |
 | `TZ` | Timezone for logs, reminders and cron jobs (e.g. `Europe/Berlin`) | `UTC` |
 | `LOG_LEVEL` | `info` = concise user actions, `debug` = verbose details | `info` |
 | `ALLOWED_ORIGINS` | Comma-separated origins for CORS and email links | same-origin |
