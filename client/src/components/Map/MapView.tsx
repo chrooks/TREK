@@ -485,6 +485,7 @@ export const MapView = memo(function MapView({
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
         maxZoom={19}
         keepBuffer={4}
+        referrerPolicy="strict-origin-when-cross-origin"
       />
 
       <MapController center={center} zoom={zoom} />
