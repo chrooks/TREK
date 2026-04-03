@@ -126,8 +126,8 @@ export async function downloadTripPDF({ trip, days, places, assignments, categor
   const sorted = [...(days || [])].sort((a, b) => a.day_number - b.day_number)
   const range = longDateRange(sorted, loc)
   const coverImg = safeImg(trip?.cover_image)
-  //retrieve accomodations for the trip to display on the day sections and prefetch their photos if needed
-  const accomodations = await accommodationsApi.list(trip.id);
+  //retrieve accommodations for the trip to display on the day sections and prefetch their photos if needed
+  const accommodations = await accommodationsApi.list(trip.id);
 
   // Pre-fetch place photos from Google
   const photoMap = await fetchPlacePhotos(assignments)
@@ -238,11 +238,11 @@ export async function downloadTripPDF({ trip, days, places, assignments, categor
             </div>`
       }).join('')
 
-    const accomodationsForDay = accomodations.accommodations?.filter(a =>
+    const accommodationsForDay = accommodations.accommodations?.filter(a =>
       days.some(d => d.id >= a.start_day_id && d.id <= a.end_day_id && d.id === day?.id)
     ).sort((a, b) => a.start_day_id - b.start_day_id);
 
-    //Const icons for accomodation actions and details
+    //Const icons for accommodation actions and details
     const ICON_ACC_CHECKIN = accommodationIconSvg('checkin');
     const ICON_ACC_CHECKOUT = accommodationIconSvg('checkout');
     const ICON_ACC_LOCATION = accommodationIconSvg('location');
@@ -250,8 +250,8 @@ export async function downloadTripPDF({ trip, days, places, assignments, categor
     const ICON_ACC_CONFIRMATION = accommodationIconSvg('confirmation');
     const ICON_ACC_ACCOMMODATION = accommodationIconSvg('accommodation');
 
-    const accomodationDetails = accomodationsForDay.map(item => { 
-      
+    const accommodationDetails = accommodationsForDay.map(item => { 
+
       const isCheckIn = day.id === item.start_day_id;
       const isCheckOut = day.id === item.end_day_id;
       const accomoAction = isCheckIn ? tr('reservations.meta.checkIn') 
@@ -267,21 +267,21 @@ export async function downloadTripPDF({ trip, days, places, assignments, categor
           : ''
 
       return `
-      <div class="day-accomodation">
-        <div class="day-accomodation-title accomodation-center-icon" >${accomoEmoji} ${escHtml(accomoAction)}</div>
-        ${accomoTime ? `<div class="accomodation-center-icon">${accomoEmoji} <b>${accomoTime}</b></div>` : ''}
+      <div class="day-accommodation">
+        <div class="day-accommodation-title accommodation-center-icon" >${accomoEmoji} ${escHtml(accomoAction)}</div>
+        ${accomoTime ? `<div class="accommodation-center-icon">${accomoEmoji} <b>${accomoTime}</b></div>` : ''}
 
-        <div class="accomodation-center-icon">${ICON_ACC_ACCOMMODATION} ${escHtml(item.place_name)}</div>
-        ${item.place_address ? `<div class="accomodation-center-icon">${ICON_ACC_LOCATION} ${escHtml(item.place_address)}</div>` : ''}  
-        ${item.notes ? `<div class="accomodation-center-icon">${ICON_ACC_NOTE} ${escHtml(item.notes)}</div>` : ''}
-    ${isCheckIn && item.confirmation ? `<div class="accomodation-center-icon">${ICON_ACC_CONFIRMATION} ${escHtml(item.confirmation)}</div>` : ''}
+        <div class="accommodation-center-icon">${ICON_ACC_ACCOMMODATION} ${escHtml(item.place_name)}</div>
+        ${item.place_address ? `<div class="accommodation-center-icon">${ICON_ACC_LOCATION} ${escHtml(item.place_address)}</div>` : ''}  
+        ${item.notes ? `<div class="accommodation-center-icon">${ICON_ACC_NOTE} ${escHtml(item.notes)}</div>` : ''}
+    ${isCheckIn && item.confirmation ? `<div class="accommodation-center-icon">${ICON_ACC_CONFIRMATION} ${escHtml(item.confirmation)}</div>` : ''}
       </div>
       `
     }).join('');
 
-    const accomodationsHtml = accomodationDetails ?
-      `<div class="day-accomodations-overview">
-                <div class="day-accomodations ${accomodationsForDay.length === 1 ? 'single' : ''}">${accomodationDetails}</div>
+    const accommodationsHtml = accommodationDetails ?
+      `<div class="day-accommodations-overview">
+                <div class="day-accommodations ${accommodationsForDay.length === 1 ? 'single' : ''}">${accommodationDetails}</div>
              </div>` : '';
 
     return `
@@ -292,7 +292,7 @@ export async function downloadTripPDF({ trip, days, places, assignments, categor
           ${day.date ? `<span class="day-date">${shortDate(day.date, loc)}</span>` : ''}
           ${cost ? `<span class="day-cost">${cost}</span>` : ''}
         </div>
-        <div class="day-body">${accomodationsHtml}${itemsHtml}</div>
+        <div class="day-body">${accommodationsHtml}${itemsHtml}</div>
       </div>`  
   }).join('')
 
@@ -376,12 +376,12 @@ export async function downloadTripPDF({ trip, days, places, assignments, categor
   .day-cost  { font-size: 9px; font-weight: 600; color: rgba(255,255,255,0.65); }
   .day-body  { padding: 12px 28px 6px; }
 
-  /* Accomodation info */
-  .day-accomodations-overview {   font-size: 12px; }
-  .day-accomodations   { display: flex; flex-direction: row; justify-content: space-between; }
-  .day-accomodations.single { justify-content: center; }
+  /* accommodation info */
+  .day-accommodations-overview {   font-size: 12px; }
+  .day-accommodations   { display: flex; flex-direction: row; justify-content: space-between; }
+  .day-accommodations.single { justify-content: center; }
 
-  .day-accomodation   {
+  .day-accommodation   {
     width: 50%;
     margin:10px;
     padding:10px;
@@ -392,7 +392,7 @@ export async function downloadTripPDF({ trip, days, places, assignments, categor
     flex-direction: column;
   }
 
-  .day-accomodation-title {
+  .day-accommodation-title {
     font-size: 18px;
     font-weight: 600;
     text-align: center;
@@ -400,7 +400,7 @@ export async function downloadTripPDF({ trip, days, places, assignments, categor
     align-self: center;
   }
 
-  .accomodation-center-icon {
+  .accommodation-center-icon {
     display: flex;
     align-items: center;
   }
