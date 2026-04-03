@@ -79,16 +79,17 @@ router.get('/status', authenticate, async (req: Request, res: Response) => {
   }
 });
 
-// Test connection with saved credentials
+// Test connection with provided credentials only
 router.post('/test', authenticate, async (req: Request, res: Response) => {
-  const authReq = req as AuthRequest;
-  const creds = getImmichCredentials(authReq.user.id);
-  if (!creds) return res.json({ connected: false, error: 'No credentials configured' });
-  const ssrf = await checkSsrf(creds.immich_url);
+  const { immich_url, immich_api_key } = req.body as { immich_url?: string; immich_api_key?: string };
+  const url = String(immich_url || '').trim();
+  const apiKey = String(immich_api_key || '').trim();
+  if (!url || !apiKey) return res.json({ connected: false, error: 'URL and API key required' });
+  const ssrf = await checkSsrf(url);
   if (!ssrf.allowed) return res.json({ connected: false, error: ssrf.error ?? 'Invalid Immich URL' });
   try {
-    const resp = await fetch(`${creds.immich_url}/api/users/me`, {
-      headers: { 'x-api-key': creds.immich_api_key, 'Accept': 'application/json' },
+    const resp = await fetch(`${url}/api/users/me`, {
+      headers: { 'x-api-key': apiKey, 'Accept': 'application/json' },
       signal: AbortSignal.timeout(10000),
     });
     if (!resp.ok) return res.json({ connected: false, error: `HTTP ${resp.status}` });

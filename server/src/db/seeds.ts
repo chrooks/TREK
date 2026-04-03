@@ -119,7 +119,7 @@ function seedAddons(db: Database.Database): void {
           settings_get: '/integrations/synologyphotos/settings',
           settings_put: '/integrations/synologyphotos/settings',
           status_get: '/integrations/synologyphotos/status',
-          test_get: '/integrations/synologyphotos/status',
+          test_post: '/integrations/synologyphotos/test',
         }),
       },
     ];

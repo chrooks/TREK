@@ -7,6 +7,7 @@ import { broadcast } from '../websocket';
 import { AuthRequest } from '../types';
 import { maybe_encrypt_api_key, decrypt_api_key } from '../services/apiKeyCrypto';
 import { consumeEphemeralToken } from '../services/ephemeralTokens';
+import { checkSsrf } from '../utils/ssrfGuard';
 
 const router = express.Router();
 
@@ -260,6 +261,49 @@ router.get('/status', authenticate, async (req: Request, res: Response) => {
     res.json({ connected: true, user: { username: user.synology_username } });
   } catch (err: unknown) {
     res.json({ connected: false, error: err instanceof Error ? err.message : 'Connection failed' });
+  }
+});
+
+// Test connection with provided credentials only
+router.post('/test', authenticate, async (req: Request, res: Response) => {
+  const { synology_url, synology_username, synology_password } = req.body as { synology_url?: string; synology_username?: string; synology_password?: string };
+
+  const url = String(synology_url || '').trim();
+  const username = String(synology_username || '').trim();
+  const password = String(synology_password || '').trim();
+
+  if (!url || !username || !password) {
+    return res.json({ connected: false, error: 'URL, username, and password are required' });
+  }
+
+  const ssrf = await checkSsrf(url);
+  if (!ssrf.allowed) return res.json({ connected: false, error: ssrf.error ?? 'Invalid Synology URL' });
+
+  try {
+    const endpoint = prepareSynologyEndpoint(url);
+    const body = new URLSearchParams({
+      api: 'SYNO.API.Auth',
+      method: 'login',
+      version: '3',
+      account: username,
+      passwd: password,
+    });
+
+    const resp = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+      },
+      body,
+      signal: AbortSignal.timeout(30000),
+    });
+
+    if (!resp.ok) return res.json({ connected: false, error: `HTTP ${resp.status}` });
+    const data = await resp.json() as { success: boolean; data?: { sid?: string } };
+    if (!data.success || !data.data?.sid) return res.json({ connected: false, error: 'Authentication failed' });
+    return res.json({ connected: true, user: { username } });
+  } catch (err: unknown) {
+    return res.json({ connected: false, error: err instanceof Error ? err.message : 'Connection failed' });
   }
 });
 
