@@ -933,6 +933,27 @@ const it: Record<string, string | { name: string; category: string }[]> = {
   'reservations.linkAssignment': 'Collega all\'assegnazione del giorno',
   'reservations.pickAssignment': 'Seleziona un\'assegnazione dal tuo programma...',
   'reservations.noAssignment': 'Nessun collegamento (autonomo)',
+  'reservations.departureDate': 'Partenza',
+  'reservations.arrivalDate': 'Arrivo',
+  'reservations.departureTime': 'Ora part.',
+  'reservations.arrivalTime': 'Ora arr.',
+  'reservations.pickupDate': 'Ritiro',
+  'reservations.returnDate': 'Riconsegna',
+  'reservations.pickupTime': 'Ora ritiro',
+  'reservations.returnTime': 'Ora riconsegna',
+  'reservations.endDate': 'Data fine',
+  'reservations.meta.departureTimezone': 'TZ part.',
+  'reservations.meta.arrivalTimezone': 'TZ arr.',
+  'reservations.span.departure': 'Partenza',
+  'reservations.span.arrival': 'Arrivo',
+  'reservations.span.inTransit': 'In transito',
+  'reservations.span.pickup': 'Ritiro',
+  'reservations.span.return': 'Riconsegna',
+  'reservations.span.active': 'Attivo',
+  'reservations.span.start': 'Inizio',
+  'reservations.span.end': 'Fine',
+  'reservations.span.ongoing': 'In corso',
+  'reservations.validation.endBeforeStart': 'La data/ora di fine deve essere successiva alla data/ora di inizio',
 
   // Budget
   'budget.title': 'Budget',
@@ -1543,4 +1564,5 @@ const it: Record<string, string | { name: string; category: string }[]> = {
   'notifications.test.tripText': 'Notifica di test per il viaggio "{trip}".',
 }
 
-export default it
+export default it
+

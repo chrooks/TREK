@@ -933,6 +933,27 @@ const de: Record<string, string | { name: string; category: string }[]> = {
   'reservations.linkAssignment': 'Mit Tagesplanung verknüpfen',
   'reservations.pickAssignment': 'Zuordnung aus dem Plan wählen...',
   'reservations.noAssignment': 'Keine Verknüpfung',
+  'reservations.departureDate': 'Abflug',
+  'reservations.arrivalDate': 'Ankunft',
+  'reservations.departureTime': 'Abflugzeit',
+  'reservations.arrivalTime': 'Ankunftszeit',
+  'reservations.pickupDate': 'Abholung',
+  'reservations.returnDate': 'Rückgabe',
+  'reservations.pickupTime': 'Abholzeit',
+  'reservations.returnTime': 'Rückgabezeit',
+  'reservations.endDate': 'Enddatum',
+  'reservations.meta.departureTimezone': 'Abfl. TZ',
+  'reservations.meta.arrivalTimezone': 'Ank. TZ',
+  'reservations.span.departure': 'Abflug',
+  'reservations.span.arrival': 'Ankunft',
+  'reservations.span.inTransit': 'Unterwegs',
+  'reservations.span.pickup': 'Abholung',
+  'reservations.span.return': 'Rückgabe',
+  'reservations.span.active': 'Aktiv',
+  'reservations.span.start': 'Start',
+  'reservations.span.end': 'Ende',
+  'reservations.span.ongoing': 'Laufend',
+  'reservations.validation.endBeforeStart': 'Enddatum/-zeit muss nach dem Startdatum/-zeit liegen',
 
   // Budget
   'budget.title': 'Budget',
@@ -1543,4 +1564,5 @@ const de: Record<string, string | { name: string; category: string }[]> = {
   'notifications.test.tripText': 'Testbenachrichtigung für Reise "{trip}".',
 }
 
-export default de
+export default de
+

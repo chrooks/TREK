@@ -932,6 +932,27 @@ const ru: Record<string, string> = {
   'reservations.linkAssignment': 'Привязать к назначению дня',
   'reservations.pickAssignment': 'Выберите назначение из вашего плана...',
   'reservations.noAssignment': 'Без привязки (самостоятельное)',
+  'reservations.departureDate': 'Вылет',
+  'reservations.arrivalDate': 'Прилёт',
+  'reservations.departureTime': 'Время вылета',
+  'reservations.arrivalTime': 'Время прилёта',
+  'reservations.pickupDate': 'Получение',
+  'reservations.returnDate': 'Возврат',
+  'reservations.pickupTime': 'Время получения',
+  'reservations.returnTime': 'Время возврата',
+  'reservations.endDate': 'Дата окончания',
+  'reservations.meta.departureTimezone': 'TZ вылета',
+  'reservations.meta.arrivalTimezone': 'TZ прилёта',
+  'reservations.span.departure': 'Вылет',
+  'reservations.span.arrival': 'Прилёт',
+  'reservations.span.inTransit': 'В пути',
+  'reservations.span.pickup': 'Получение',
+  'reservations.span.return': 'Возврат',
+  'reservations.span.active': 'Активно',
+  'reservations.span.start': 'Начало',
+  'reservations.span.end': 'Конец',
+  'reservations.span.ongoing': 'Продолжается',
+  'reservations.validation.endBeforeStart': 'Дата/время окончания должны быть позже даты/времени начала',
 
   // Budget
   'budget.title': 'Бюджет',
@@ -1542,4 +1563,5 @@ const ru: Record<string, string> = {
   'notifications.test.tripText': 'Тестовое уведомление для поездки "{trip}".',
 }
 
-export default ru
+export default ru
+

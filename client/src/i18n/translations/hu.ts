@@ -933,6 +933,27 @@ const hu: Record<string, string | { name: string; category: string }[]> = {
   'reservations.linkAssignment': 'Összekapcsolás napi tervvel',
   'reservations.pickAssignment': 'Válassz hozzárendelést a tervedből...',
   'reservations.noAssignment': 'Nincs összekapcsolás (önálló)',
+  'reservations.departureDate': 'Indulás',
+  'reservations.arrivalDate': 'Érkezés',
+  'reservations.departureTime': 'Indulási idő',
+  'reservations.arrivalTime': 'Érkezési idő',
+  'reservations.pickupDate': 'Felvétel',
+  'reservations.returnDate': 'Visszaadás',
+  'reservations.pickupTime': 'Felvétel ideje',
+  'reservations.returnTime': 'Visszaadás ideje',
+  'reservations.endDate': 'Befejezés dátuma',
+  'reservations.meta.departureTimezone': 'TZ indulás',
+  'reservations.meta.arrivalTimezone': 'TZ érkezés',
+  'reservations.span.departure': 'Indulás',
+  'reservations.span.arrival': 'Érkezés',
+  'reservations.span.inTransit': 'Úton',
+  'reservations.span.pickup': 'Felvétel',
+  'reservations.span.return': 'Visszaadás',
+  'reservations.span.active': 'Aktív',
+  'reservations.span.start': 'Kezdés',
+  'reservations.span.end': 'Vége',
+  'reservations.span.ongoing': 'Folyamatban',
+  'reservations.validation.endBeforeStart': 'A befejezés dátuma/időpontja a kezdés utáni kell legyen',
 
   // Költségvetés
   'budget.title': 'Költségvetés',
@@ -1543,4 +1564,5 @@ const hu: Record<string, string | { name: string; category: string }[]> = {
   'notifications.test.tripText': 'Teszt értesítés a(z) "{trip}" utazáshoz.',
 }
 
-export default hu
+export default hu
+

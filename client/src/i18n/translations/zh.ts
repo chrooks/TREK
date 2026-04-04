@@ -932,6 +932,27 @@ const zh: Record<string, string> = {
   'reservations.linkAssignment': '关联日程分配',
   'reservations.pickAssignment': '从计划中选择一个分配...',
   'reservations.noAssignment': '无关联（独立）',
+  'reservations.departureDate': '出发',
+  'reservations.arrivalDate': '到达',
+  'reservations.departureTime': '出发时间',
+  'reservations.arrivalTime': '到达时间',
+  'reservations.pickupDate': '取车',
+  'reservations.returnDate': '还车',
+  'reservations.pickupTime': '取车时间',
+  'reservations.returnTime': '还车时间',
+  'reservations.endDate': '结束日期',
+  'reservations.meta.departureTimezone': '出发时区',
+  'reservations.meta.arrivalTimezone': '到达时区',
+  'reservations.span.departure': '出发',
+  'reservations.span.arrival': '到达',
+  'reservations.span.inTransit': '途中',
+  'reservations.span.pickup': '取车',
+  'reservations.span.return': '还车',
+  'reservations.span.active': '使用中',
+  'reservations.span.start': '开始',
+  'reservations.span.end': '结束',
+  'reservations.span.ongoing': '进行中',
+  'reservations.validation.endBeforeStart': '结束日期/时间必须晚于开始日期/时间',
 
   // Budget
   'budget.title': '预算',
@@ -1542,4 +1563,5 @@ const zh: Record<string, string> = {
   'notifications.test.tripText': '行程"{trip}"的测试通知。',
 }
 
-export default zh
+export default zh
+

@@ -211,13 +211,67 @@ const DayPlanSidebar = React.memo(function DayPlanSidebar({
 
   const TRANSPORT_TYPES = new Set(['flight', 'train', 'bus', 'car', 'cruise'])
 
+  // Determine if a reservation's end_time represents a different date (multi-day)
+  const getEndDate = (r: Reservation) => {
+    const endStr = r.reservation_end_time || ''
+    return endStr.includes('T') ? endStr.split('T')[0] : null
+  }
+
+  // Get span phase: how a reservation relates to a specific day's date
+  const getSpanPhase = (r: Reservation, dayDate: string): 'single' | 'start' | 'middle' | 'end' => {
+    if (!r.reservation_time) return 'single'
+    const startDate = r.reservation_time.split('T')[0]
+    const endDate = getEndDate(r) || startDate
+    if (startDate === endDate) return 'single'
+    if (dayDate === startDate) return 'start'
+    if (dayDate === endDate) return 'end'
+    return 'middle'
+  }
+
+  // Get the appropriate display time for a reservation on a specific day
+  const getDisplayTimeForDay = (r: Reservation, dayDate: string): string | null => {
+    const phase = getSpanPhase(r, dayDate)
+    if (phase === 'end') return r.reservation_end_time || null
+    if (phase === 'middle') return null
+    return r.reservation_time || null
+  }
+
+  // Get phase label for multi-day badge
+  const getSpanLabel = (r: Reservation, phase: string): string | null => {
+    if (phase === 'single') return null
+    if (r.type === 'flight') return t(`reservations.span.${phase === 'start' ? 'departure' : phase === 'end' ? 'arrival' : 'inTransit'}`)
+    if (r.type === 'car') return t(`reservations.span.${phase === 'start' ? 'pickup' : phase === 'end' ? 'return' : 'active'}`)
+    return t(`reservations.span.${phase === 'start' ? 'start' : phase === 'end' ? 'end' : 'ongoing'}`)
+  }
+
   const getTransportForDay = (dayId: number) => {
     const day = days.find(d => d.id === dayId)
     if (!day?.date) return []
     return reservations.filter(r => {
-      if (!r.reservation_time || !TRANSPORT_TYPES.has(r.type)) return false
-      const resDate = r.reservation_time.split('T')[0]
-      return resDate === day.date
+      if (!r.reservation_time || r.type === 'hotel') return false
+      const startDate = r.reservation_time.split('T')[0]
+      const endDate = getEndDate(r)
+
+      if (endDate && endDate !== startDate) {
+        // Multi-day: show on any day in range (car middle handled elsewhere)
+        return day.date >= startDate && day.date <= endDate
+      } else {
+        // Single-day: show all non-hotel reservations that match this day's date
+        return startDate === day.date
+      }
+    })
+  }
+
+  // Get car rentals that are in "active" (middle) phase for a day — shown in day header, not timeline
+  const getActiveRentalsForDay = (dayId: number) => {
+    const day = days.find(d => d.id === dayId)
+    if (!day?.date) return []
+    return reservations.filter(r => {
+      if (r.type !== 'car' || !r.reservation_time) return false
+      const startDate = r.reservation_time.split('T')[0]
+      const endDate = getEndDate(r)
+      if (!endDate || endDate === startDate) return false
+      return day.date > startDate && day.date < endDate
     })
   }
 
@@ -279,6 +333,7 @@ const DayPlanSidebar = React.memo(function DayPlanSidebar({
     const da = getDayAssignments(dayId)
     const dn = (dayNotes[String(dayId)] || []).slice().sort((a, b) => a.sort_order - b.sort_order)
     const transport = getTransportForDay(dayId)
+    const dayDate = days.find(d => d.id === dayId)?.date || ''
 
     // Initialize positions for transports that don't have one yet
     if (transport.some(r => r.day_plan_position == null)) {
@@ -295,9 +350,14 @@ const DayPlanSidebar = React.memo(function DayPlanSidebar({
     ].sort((a, b) => a.sortKey - b.sortKey)
 
     // Timed places + transports: compute sortKeys based on time, inserted among base items
+    // For multi-day transports, use the appropriate display time for this day
     const allTimed = [
       ...timedPlaces.map(a => ({ type: 'place' as const, data: a, minutes: parseTimeToMinutes(a.place?.place_time)! })),
-      ...transport.map(r => ({ type: 'transport' as const, data: r, minutes: parseTimeToMinutes(r.reservation_time) ?? 0 })),
+      ...transport.map(r => ({
+        type: 'transport' as const,
+        data: r,
+        minutes: parseTimeToMinutes(getDisplayTimeForDay(r, dayDate)) ?? 0,
+      })),
     ].sort((a, b) => a.minutes - b.minutes)
 
     if (allTimed.length === 0) return baseItems
@@ -968,6 +1028,17 @@ const DayPlanSidebar = React.memo(function DayPlanSidebar({
                           )
                         })
                       })()}
+                      {/* Active rental car badges */}
+                      {(() => {
+                        const activeRentals = getActiveRentalsForDay(day.id)
+                        if (activeRentals.length === 0) return null
+                        return activeRentals.map(r => (
+                          <span key={`rental-${r.id}`} onClick={e => { e.stopPropagation(); setTransportDetail(r) }} style={{ display: 'inline-flex', alignItems: 'center', gap: 3, padding: '2px 7px', borderRadius: 5, background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.2)', flexShrink: 1, minWidth: 0, maxWidth: '40%', cursor: 'pointer' }}>
+                            <Car size={8} style={{ color: '#3b82f6', flexShrink: 0 }} />
+                            <span style={{ fontSize: 9, color: 'var(--text-muted)', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.title}</span>
+                          </span>
+                        ))
+                      })()}
                     </div>
                   )}
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 2, flexWrap: 'wrap' }}>
@@ -1291,6 +1362,11 @@ const DayPlanSidebar = React.memo(function DayPlanSidebar({
                       // Transport booking (flight, train, bus, car, cruise)
                       if (item.type === 'transport') {
                         const res = item.data
+                        const spanPhase = getSpanPhase(res, day.date)
+
+                        // Car "active" (middle) days are shown in the day header, skip here
+                        if (res.type === 'car' && spanPhase === 'middle') return null
+
                         const TransportIcon = RES_ICONS[res.type] || Ticket
                         const color = '#3b82f6'
                         const meta = typeof res.metadata === 'string' ? JSON.parse(res.metadata || '{}') : (res.metadata || {})
@@ -1307,8 +1383,12 @@ const DayPlanSidebar = React.memo(function DayPlanSidebar({
                           subtitle = [meta.train_number, meta.platform ? `Gl. ${meta.platform}` : '', meta.seat ? `Sitz ${meta.seat}` : ''].filter(Boolean).join(' · ')
                         }
 
+                        // Multi-day span phase
+                        const spanLabel = getSpanLabel(res, spanPhase)
+                        const displayTime = getDisplayTimeForDay(res, day.date)
+
                         return (
-                          <React.Fragment key={`transport-${res.id}`}>
+                          <React.Fragment key={`transport-${res.id}-${day.id}`}>
                           {showDropLine && <div style={{ height: 2, background: 'var(--text-primary)', borderRadius: 1, margin: '2px 8px' }} />}
                           <div
                             onClick={() => setTransportDetail(res)}
@@ -1340,6 +1420,7 @@ const DayPlanSidebar = React.memo(function DayPlanSidebar({
                               background: isTransportHovered ? `${color}12` : `${color}08`,
                               cursor: 'pointer', userSelect: 'none',
                               transition: 'background 0.1s',
+                              opacity: spanPhase === 'middle' ? 0.65 : 1,
                             }}
                           >
                             <div style={{
@@ -1350,14 +1431,27 @@ const DayPlanSidebar = React.memo(function DayPlanSidebar({
                             </div>
                             <div style={{ flex: 1, minWidth: 0 }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                {spanLabel && (
+                                  <span style={{
+                                    fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 4, flexShrink: 0,
+                                    background: `${color}20`, color: color, textTransform: 'uppercase', letterSpacing: '0.03em',
+                                  }}>
+                                    {spanLabel}
+                                  </span>
+                                )}
                                 <span style={{ fontSize: 12.5, fontWeight: 500, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                   {res.title}
                                 </span>
-                                {res.reservation_time?.includes('T') && (
+                                {displayTime?.includes('T') && (
                                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, flexShrink: 0, fontSize: 10, color: 'var(--text-faint)', fontWeight: 400, marginLeft: 6 }}>
                                     <Clock size={9} strokeWidth={2} />
-                                    {new Date(res.reservation_time).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', hour12: timeFormat === '12h' })}
-                                    {res.reservation_end_time?.includes('T') && ` – ${new Date(res.reservation_end_time).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', hour12: timeFormat === '12h' })}`}
+                                    {new Date(displayTime).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', hour12: timeFormat === '12h' })}
+                                    {spanPhase === 'single' && res.reservation_end_time && (() => {
+                                      const endStr = res.reservation_end_time.includes('T') ? res.reservation_end_time : (displayTime.split('T')[0] + 'T' + res.reservation_end_time)
+                                      return ` – ${new Date(endStr).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', hour12: timeFormat === '12h' })}`
+                                    })()}
+                                    {meta.departure_timezone && spanPhase === 'start' && ` ${meta.departure_timezone}`}
+                                    {meta.arrival_timezone && spanPhase === 'end' && ` ${meta.arrival_timezone}`}
                                   </span>
                                 )}
                               </div>

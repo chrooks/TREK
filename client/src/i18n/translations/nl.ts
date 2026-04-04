@@ -932,6 +932,27 @@ const nl: Record<string, string> = {
   'reservations.linkAssignment': 'Koppelen aan dagtoewijzing',
   'reservations.pickAssignment': 'Selecteer een toewijzing uit je plan...',
   'reservations.noAssignment': 'Geen koppeling (zelfstandig)',
+  'reservations.departureDate': 'Vertrek',
+  'reservations.arrivalDate': 'Aankomst',
+  'reservations.departureTime': 'Vertrektijd',
+  'reservations.arrivalTime': 'Aankomsttijd',
+  'reservations.pickupDate': 'Ophalen',
+  'reservations.returnDate': 'Inleveren',
+  'reservations.pickupTime': 'Ophaaltijd',
+  'reservations.returnTime': 'Inlevertijd',
+  'reservations.endDate': 'Einddatum',
+  'reservations.meta.departureTimezone': 'TZ vertrek',
+  'reservations.meta.arrivalTimezone': 'TZ aankomst',
+  'reservations.span.departure': 'Vertrek',
+  'reservations.span.arrival': 'Aankomst',
+  'reservations.span.inTransit': 'Onderweg',
+  'reservations.span.pickup': 'Ophalen',
+  'reservations.span.return': 'Inleveren',
+  'reservations.span.active': 'Actief',
+  'reservations.span.start': 'Start',
+  'reservations.span.end': 'Einde',
+  'reservations.span.ongoing': 'Lopend',
+  'reservations.validation.endBeforeStart': 'Einddatum/-tijd moet na de startdatum/-tijd liggen',
 
   // Budget
   'budget.title': 'Budget',
@@ -1542,4 +1563,5 @@ const nl: Record<string, string> = {
   'notifications.test.tripText': 'Testmelding voor reis "{trip}".',
 }
 
-export default nl
+export default nl
+

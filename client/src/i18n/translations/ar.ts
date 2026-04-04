@@ -936,6 +936,27 @@ const ar: Record<string, string | { name: string; category: string }[]> = {
   'reservations.linkAssignment': 'ربط بخطة اليوم',
   'reservations.pickAssignment': 'اختر عنصرًا من خطتك...',
   'reservations.noAssignment': 'بلا ربط',
+  'reservations.departureDate': 'المغادرة',
+  'reservations.arrivalDate': 'الوصول',
+  'reservations.departureTime': 'وقت المغادرة',
+  'reservations.arrivalTime': 'وقت الوصول',
+  'reservations.pickupDate': 'الاستلام',
+  'reservations.returnDate': 'الإرجاع',
+  'reservations.pickupTime': 'وقت الاستلام',
+  'reservations.returnTime': 'وقت الإرجاع',
+  'reservations.endDate': 'تاريخ الانتهاء',
+  'reservations.meta.departureTimezone': 'TZ المغادرة',
+  'reservations.meta.arrivalTimezone': 'TZ الوصول',
+  'reservations.span.departure': 'المغادرة',
+  'reservations.span.arrival': 'الوصول',
+  'reservations.span.inTransit': 'في الطريق',
+  'reservations.span.pickup': 'الاستلام',
+  'reservations.span.return': 'الإرجاع',
+  'reservations.span.active': 'نشط',
+  'reservations.span.start': 'البداية',
+  'reservations.span.end': 'النهاية',
+  'reservations.span.ongoing': 'جارٍ',
+  'reservations.validation.endBeforeStart': 'يجب أن يكون تاريخ/وقت الانتهاء بعد تاريخ/وقت البدء',
 
   // Budget
   'budget.title': 'الميزانية',
@@ -1546,4 +1567,5 @@ const ar: Record<string, string | { name: string; category: string }[]> = {
   'notifications.test.tripText': 'إشعار تجريبي للرحلة "{trip}".',
 }
 
-export default ar
+export default ar
+

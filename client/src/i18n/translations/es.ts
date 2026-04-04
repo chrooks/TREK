@@ -893,6 +893,27 @@ const es: Record<string, string> = {
   'reservations.linkAssignment': 'Vincular a una asignación del día',
   'reservations.pickAssignment': 'Selecciona una asignación de tu plan...',
   'reservations.noAssignment': 'Sin vínculo (independiente)',
+  'reservations.departureDate': 'Salida',
+  'reservations.arrivalDate': 'Llegada',
+  'reservations.departureTime': 'Hora salida',
+  'reservations.arrivalTime': 'Hora llegada',
+  'reservations.pickupDate': 'Recogida',
+  'reservations.returnDate': 'Devolución',
+  'reservations.pickupTime': 'Hora recogida',
+  'reservations.returnTime': 'Hora devolución',
+  'reservations.endDate': 'Fecha fin',
+  'reservations.meta.departureTimezone': 'TZ salida',
+  'reservations.meta.arrivalTimezone': 'TZ llegada',
+  'reservations.span.departure': 'Salida',
+  'reservations.span.arrival': 'Llegada',
+  'reservations.span.inTransit': 'En tránsito',
+  'reservations.span.pickup': 'Recogida',
+  'reservations.span.return': 'Devolución',
+  'reservations.span.active': 'Activo',
+  'reservations.span.start': 'Inicio',
+  'reservations.span.end': 'Fin',
+  'reservations.span.ongoing': 'En curso',
+  'reservations.validation.endBeforeStart': 'La fecha/hora de fin debe ser posterior a la de inicio',
 
   // Budget
   'budget.title': 'Presupuesto',
@@ -1548,4 +1569,5 @@ const es: Record<string, string> = {
   'notifications.test.tripText': 'Notificación de prueba para el viaje "{trip}".',
 }
 
-export default es
+export default es
+

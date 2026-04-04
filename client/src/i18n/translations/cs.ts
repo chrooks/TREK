@@ -934,6 +934,27 @@ const cs: Record<string, string | { name: string; category: string }[]> = {
   'reservations.linkAssignment': 'Propojit s přiřazením dne',
   'reservations.pickAssignment': 'Vyberte přiřazení z vašeho plánu...',
   'reservations.noAssignment': 'Bez propojení (samostatné)',
+  'reservations.departureDate': 'Odlet',
+  'reservations.arrivalDate': 'Přílet',
+  'reservations.departureTime': 'Čas odletu',
+  'reservations.arrivalTime': 'Čas příletu',
+  'reservations.pickupDate': 'Vyzvednutí',
+  'reservations.returnDate': 'Vrácení',
+  'reservations.pickupTime': 'Čas vyzvednutí',
+  'reservations.returnTime': 'Čas vrácení',
+  'reservations.endDate': 'Datum konce',
+  'reservations.meta.departureTimezone': 'TZ odletu',
+  'reservations.meta.arrivalTimezone': 'TZ příletu',
+  'reservations.span.departure': 'Odlet',
+  'reservations.span.arrival': 'Přílet',
+  'reservations.span.inTransit': 'Na cestě',
+  'reservations.span.pickup': 'Vyzvednutí',
+  'reservations.span.return': 'Vrácení',
+  'reservations.span.active': 'Aktivní',
+  'reservations.span.start': 'Začátek',
+  'reservations.span.end': 'Konec',
+  'reservations.span.ongoing': 'Probíhá',
+  'reservations.validation.endBeforeStart': 'Datum/čas konce musí být po datu/čase začátku',
 
   // Rozpočet (Budget)
   'budget.title': 'Rozpočet',
@@ -1546,4 +1567,5 @@ const cs: Record<string, string | { name: string; category: string }[]> = {
   'notifications.test.tripText': 'Testovací oznámení pro výlet "{trip}".',
 }
 
-export default cs
+export default cs
+

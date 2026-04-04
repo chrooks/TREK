@@ -917,6 +917,27 @@ const br: Record<string, string | { name: string; category: string }[]> = {
   'reservations.linkAssignment': 'Vincular à atribuição do dia',
   'reservations.pickAssignment': 'Selecione uma atribuição do seu plano...',
   'reservations.noAssignment': 'Sem vínculo (avulsa)',
+  'reservations.departureDate': 'Partida',
+  'reservations.arrivalDate': 'Chegada',
+  'reservations.departureTime': 'Hora partida',
+  'reservations.arrivalTime': 'Hora chegada',
+  'reservations.pickupDate': 'Retirada',
+  'reservations.returnDate': 'Devolução',
+  'reservations.pickupTime': 'Hora retirada',
+  'reservations.returnTime': 'Hora devolução',
+  'reservations.endDate': 'Data final',
+  'reservations.meta.departureTimezone': 'TZ partida',
+  'reservations.meta.arrivalTimezone': 'TZ chegada',
+  'reservations.span.departure': 'Partida',
+  'reservations.span.arrival': 'Chegada',
+  'reservations.span.inTransit': 'Em trânsito',
+  'reservations.span.pickup': 'Retirada',
+  'reservations.span.return': 'Devolução',
+  'reservations.span.active': 'Ativo',
+  'reservations.span.start': 'Início',
+  'reservations.span.end': 'Fim',
+  'reservations.span.ongoing': 'Em andamento',
+  'reservations.validation.endBeforeStart': 'A data/hora final deve ser posterior à data/hora inicial',
 
   // Budget
   'budget.title': 'Orçamento',
@@ -1541,4 +1562,5 @@ const br: Record<string, string | { name: string; category: string }[]> = {
   'notifications.test.tripText': 'Notificação de teste para a viagem "{trip}".',
 }
 
-export default br
+export default br
+
