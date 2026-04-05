@@ -1607,8 +1607,8 @@ const de: Record<string, string | { name: string; category: string }[]> = {
   'todo.detail.create': 'Aufgabe erstellen',
 
   // Notification system (added from feat/notification-system)
-  'settings.notifyVersionAvailable': 'New version available',
-  'settings.notificationPreferences.noChannels': 'No notification channels are configured. Ask an admin to set up email or webhook notifications.',
+  'settings.notifyVersionAvailable': 'Neue Version verfügbar',
+  'settings.notificationPreferences.noChannels': 'Keine Benachrichtigungskanäle konfiguriert. Bitte einen Administrator, E-Mail- oder Webhook-Benachrichtigungen einzurichten.',
   'settings.webhookUrl.label': 'Webhook URL',
   'settings.webhookUrl.placeholder': 'https://discord.com/api/webhooks/...',
   'settings.webhookUrl.hint': 'Gib deine Discord-, Slack- oder benutzerdefinierte Webhook-URL ein, um Benachrichtigungen zu erhalten.',
@@ -1623,7 +1623,7 @@ const de: Record<string, string | { name: string; category: string }[]> = {
   'admin.notifications.emailPanel.title': 'Email (SMTP)',
   'admin.notifications.webhookPanel.title': 'Webhook',
   'admin.notifications.inappPanel.title': 'In-App',
-  'admin.notifications.inappPanel.hint': 'In-app notifications are always active and cannot be disabled globally.',
+  'admin.notifications.inappPanel.hint': 'In-App-Benachrichtigungen sind immer aktiv und können nicht global deaktiviert werden.',
   'admin.notifications.adminWebhookPanel.title': 'Admin-Webhook',
   'admin.notifications.adminWebhookPanel.hint': 'Dieser Webhook wird ausschließlich für Admin-Benachrichtigungen verwendet (z. B. Versions-Updates). Er ist unabhängig von den Benutzer-Webhooks und sendet automatisch, wenn eine URL konfiguriert ist.',
   'admin.notifications.adminWebhookPanel.saved': 'Admin-Webhook-URL gespeichert',
@@ -1631,16 +1631,16 @@ const de: Record<string, string | { name: string; category: string }[]> = {
   'admin.notifications.adminWebhookPanel.testFailed': 'Test-Webhook fehlgeschlagen',
   'admin.notifications.adminWebhookPanel.alwaysOnHint': 'Admin-Webhook sendet automatisch, wenn eine URL konfiguriert ist',
   'admin.notifications.adminNotificationsHint': 'Konfiguriere, welche Kanäle Admin-Benachrichtigungen liefern (z. B. Versions-Updates). Der Webhook sendet automatisch, wenn eine Admin-Webhook-URL gesetzt ist.',
-  'admin.tabs.notifications': 'Notifications',
+  'admin.tabs.notifications': 'Benachrichtigungen',
   'admin.tabs.notificationChannels': 'Benachrichtigungskanäle',
   'admin.tabs.adminNotifications': 'Admin-Benachrichtigungen',
-  'notifications.versionAvailable.title': 'Update Available',
-  'notifications.versionAvailable.text': 'TREK {version} is now available.',
-  'notifications.versionAvailable.button': 'View Details',
-  'notif.test.title': '[Test] Notification',
-  'notif.test.simple.text': 'This is a simple test notification.',
-  'notif.test.boolean.text': 'Do you accept this test notification?',
-  'notif.test.navigate.text': 'Click below to navigate to the dashboard.',
+  'notifications.versionAvailable.title': 'Update verfügbar',
+  'notifications.versionAvailable.text': 'TREK {version} ist jetzt verfügbar.',
+  'notifications.versionAvailable.button': 'Details anzeigen',
+  'notif.test.title': '[Test] Benachrichtigung',
+  'notif.test.simple.text': 'Dies ist eine einfache Testbenachrichtigung.',
+  'notif.test.boolean.text': 'Akzeptierst du diese Testbenachrichtigung?',
+  'notif.test.navigate.text': 'Klicke unten, um zum Dashboard zu navigieren.',
 
   // Notifications
   'notif.trip_invite.title': 'Reiseeinladung',
@@ -1670,8 +1670,8 @@ const de: Record<string, string | { name: string; category: string }[]> = {
   'notif.action.decline': 'Ablehnen',
   'notif.generic.title': 'Benachrichtigung',
   'notif.generic.text': 'Du hast eine neue Benachrichtigung',
-  'notif.dev.unknown_event.title': '[DEV] Unknown Event',
-  'notif.dev.unknown_event.text': 'Event type "{event}" is not registered in EVENT_NOTIFICATION_CONFIG',
+  'notif.dev.unknown_event.title': '[DEV] Unbekanntes Ereignis',
+  'notif.dev.unknown_event.text': 'Ereignistyp "{event}" ist nicht in EVENT_NOTIFICATION_CONFIG registriert',
 }
 
 export default de
