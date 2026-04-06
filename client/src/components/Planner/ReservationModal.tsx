@@ -385,7 +385,8 @@ export function ReservationModal({ isOpen, onClose, onSave, reservation, days, p
                 value={(() => { const [, t] = (form.reservation_time || '').split('T'); return t || '' })()}
                 onChange={t => {
                   const [d] = (form.reservation_time || '').split('T')
-                  const date = d || new Date().toISOString().split('T')[0]
+                  const selectedDay = days.find(dy => dy.id === selectedDayId)
+                  const date = d || selectedDay?.date || new Date().toISOString().split('T')[0]
                   set('reservation_time', t ? `${date}T${t}` : date)
                 }}
               />

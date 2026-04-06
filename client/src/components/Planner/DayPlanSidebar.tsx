@@ -248,8 +248,10 @@ const DayPlanSidebar = React.memo(function DayPlanSidebar({
   const getTransportForDay = (dayId: number) => {
     const day = days.find(d => d.id === dayId)
     if (!day?.date) return []
+    const dayAssignmentIds = (assignments[String(dayId)] || []).map(a => a.id)
     return reservations.filter(r => {
       if (!r.reservation_time || r.type === 'hotel') return false
+      if (r.assignment_id && dayAssignmentIds.includes(r.assignment_id)) return false
       const startDate = r.reservation_time.split('T')[0]
       const endDate = getEndDate(r)
 
