@@ -471,40 +471,44 @@ describe('POST /oauth/revoke', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('GET /api/oauth/authorize/validate', () => {
-  it('OAUTH-019 — returns 400 when MCP addon disabled', async () => {
+  it('OAUTH-019 — returns 200 with valid:false when MCP addon disabled', async () => {
     isAddonEnabledMock.mockReturnValue(false);
     const res = await request(app)
       .get('/api/oauth/authorize/validate')
       .query({ response_type: 'code', client_id: 'x', redirect_uri: 'https://r.example.com/cb', scope: 'trips:read', code_challenge: 'c', code_challenge_method: 'S256' });
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(200);
+    expect(res.body.valid).toBe(false);
     expect(res.body.error).toBe('mcp_disabled');
   });
 
-  it('OAUTH-020 — returns 400 for wrong response_type', async () => {
+  it('OAUTH-020 — returns 200 with valid:false for wrong response_type', async () => {
     const res = await request(app)
       .get('/api/oauth/authorize/validate')
       .query({ response_type: 'token', client_id: 'x', redirect_uri: 'https://r.example.com/cb', scope: 'trips:read', code_challenge: 'c', code_challenge_method: 'S256' });
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(200);
+    expect(res.body.valid).toBe(false);
     expect(res.body.error).toBe('unsupported_response_type');
   });
 
-  it('OAUTH-021 — returns 400 for missing PKCE', async () => {
+  it('OAUTH-021 — returns 200 with valid:false for missing PKCE', async () => {
     const res = await request(app)
       .get('/api/oauth/authorize/validate')
       .query({ response_type: 'code', client_id: 'x', redirect_uri: 'https://r.example.com/cb', scope: 'trips:read' });
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(200);
+    expect(res.body.valid).toBe(false);
     expect(res.body.error).toBe('invalid_request');
   });
 
-  it('OAUTH-022 — returns 400 for unknown client_id', async () => {
+  it('OAUTH-022 — returns 200 with valid:false for unknown client_id', async () => {
     const res = await request(app)
       .get('/api/oauth/authorize/validate')
       .query({ response_type: 'code', client_id: 'unknown-client', redirect_uri: 'https://r.example.com/cb', scope: 'trips:read', code_challenge: 'abc', code_challenge_method: 'S256' });
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(200);
+    expect(res.body.valid).toBe(false);
     expect(res.body.error).toBe('invalid_client');
   });
 
-  it('OAUTH-023 — returns 400 for mismatched redirect_uri', async () => {
+  it('OAUTH-023 — returns 200 with valid:false for mismatched redirect_uri', async () => {
     const { user } = createUser(testDb);
     const r = createOAuthClient(user.id, 'App', ['https://app.example.com/cb'], ['trips:read']);
 
@@ -518,11 +522,12 @@ describe('GET /api/oauth/authorize/validate', () => {
         code_challenge: 'abc',
         code_challenge_method: 'S256',
       });
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(200);
+    expect(res.body.valid).toBe(false);
     expect(res.body.error).toBe('invalid_redirect_uri');
   });
 
-  it('OAUTH-024 — returns 400 for empty scope', async () => {
+  it('OAUTH-024 — returns 200 with valid:false for empty scope', async () => {
     const { user } = createUser(testDb);
     const r = createOAuthClient(user.id, 'App', ['https://app.example.com/cb'], ['trips:read']);
 
@@ -536,11 +541,32 @@ describe('GET /api/oauth/authorize/validate', () => {
         code_challenge: 'abc',
         code_challenge_method: 'S256',
       });
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(200);
+    expect(res.body.valid).toBe(false);
     expect(res.body.error).toBe('invalid_scope');
   });
 
-  it('OAUTH-025 — returns 400 for scope not in client allowed_scopes', async () => {
+  it('OAUTH-025a — narrows scope to allowed intersection when client lacks some requested scopes', async () => {
+    const { user } = createUser(testDb);
+    const r = createOAuthClient(user.id, 'App', ['https://app.example.com/cb'], ['trips:read']);
+
+    const res = await request(app)
+      .get('/api/oauth/authorize/validate')
+      .query({
+        response_type: 'code',
+        client_id: r.client!.client_id,
+        redirect_uri: 'https://app.example.com/cb',
+        scope: 'trips:read trips:delete',
+        code_challenge: 'abc',
+        code_challenge_method: 'S256',
+      });
+    expect(res.status).toBe(200);
+    expect(res.body.valid).toBe(true);
+    // trips:delete was dropped — only trips:read granted
+    expect(res.body.scopes).toEqual(['trips:read']);
+  });
+
+  it('OAUTH-025b — returns 200 with valid:false when no requested scope is allowed', async () => {
     const { user } = createUser(testDb);
     const r = createOAuthClient(user.id, 'App', ['https://app.example.com/cb'], ['trips:read']);
 
@@ -554,7 +580,8 @@ describe('GET /api/oauth/authorize/validate', () => {
         code_challenge: 'abc',
         code_challenge_method: 'S256',
       });
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(200);
+    expect(res.body.valid).toBe(false);
     expect(res.body.error).toBe('invalid_scope');
   });
 
@@ -763,6 +790,7 @@ describe('Client CRUD — /api/oauth/clients', () => {
       .set('Cookie', authCookie(user.id));
     expect(res.status).toBe(404);
   });
+
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

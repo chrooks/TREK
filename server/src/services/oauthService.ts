@@ -425,27 +425,29 @@ export function validateAuthorizeRequest(
   }
 
   const allowedScopes: string[] = JSON.parse(client.allowed_scopes);
-  const disallowed = requestedScopes.filter(s => !allowedScopes.includes(s));
-  if (disallowed.length > 0) {
-    return { valid: false, error: 'invalid_scope', error_description: `Scopes not permitted for this client: ${disallowed.join(', ')}` };
+  // Narrow to the intersection: drop scopes the client isn't permitted for rather
+  // than rejecting the whole request (per OAuth 2.0 §3.3 scope narrowing).
+  const grantedScopes = requestedScopes.filter(s => allowedScopes.includes(s));
+  if (grantedScopes.length === 0) {
+    return { valid: false, error: 'invalid_scope', error_description: 'None of the requested scopes are permitted for this client' };
   }
 
   if (userId === null) {
     return {
       valid: true,
       client: { name: client.name, allowed_scopes: allowedScopes },
-      scopes: requestedScopes,
+      scopes: grantedScopes,
       loginRequired: true,
     };
   }
 
   const existingConsent = getConsent(params.client_id, userId);
-  const consentRequired = !existingConsent || !isConsentSufficient(existingConsent, requestedScopes);
+  const consentRequired = !existingConsent || !isConsentSufficient(existingConsent, grantedScopes);
 
   return {
     valid: true,
     client: { name: client.name, allowed_scopes: allowedScopes },
-    scopes: requestedScopes,
+    scopes: grantedScopes,
     consentRequired,
   };
 }

@@ -167,10 +167,6 @@ oauthApiRouter.get('/authorize/validate', (req: Request, res: Response) => {
     userId,
   );
 
-  if (!result.valid) {
-    return res.status(400).json(result);
-  }
-
   return res.json(result);
 });
 
