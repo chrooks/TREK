@@ -394,6 +394,76 @@ export function exportICS(tripId: string | number): { ics: string; filename: str
     ics += `END:VEVENT\r\n`;
   }
 
+  // Days with assignments and notes
+  const days = db.prepare('SELECT * FROM days WHERE trip_id = ? ORDER BY day_number ASC').all(tripId) as any[];
+  for (const day of days) {
+    if (!day.date) continue;
+
+    const assignments = db.prepare(`
+      SELECT da.*, p.name as place_name, p.address as place_address,
+        COALESCE(da.assignment_time, p.place_time) as effective_time,
+        COALESCE(da.assignment_end_time, p.end_time) as effective_end_time
+      FROM day_assignments da
+      JOIN places p ON da.place_id = p.id
+      WHERE da.day_id = ?
+      ORDER BY da.order_index ASC, da.created_at ASC
+    `).all(day.id) as any[];
+
+    const notes = db.prepare(
+      'SELECT * FROM day_notes WHERE day_id = ? ORDER BY sort_order ASC, created_at ASC'
+    ).all(day.id) as any[];
+
+    const timed = assignments.filter(a => a.effective_time);
+    const untimed = assignments.filter(a => !a.effective_time);
+
+    // Timed assignments → individual events
+    for (const a of timed) {
+      ics += `BEGIN:VEVENT\r\nUID:${uid(a.id, 'assign')}\r\nDTSTAMP:${now}\r\n`;
+      ics += `DTSTART:${fmtDateTime(a.effective_time, day.date + 'T00:00')}\r\n`;
+      if (a.effective_end_time) {
+        ics += `DTEND:${fmtDateTime(a.effective_end_time, day.date + 'T00:00')}\r\n`;
+      }
+      ics += `SUMMARY:${esc(a.place_name)}\r\n`;
+      let desc = '';
+      if (a.notes) desc += a.notes;
+      if (a.place_address) desc += (desc ? '\n' : '') + a.place_address;
+      if (desc) ics += `DESCRIPTION:${esc(desc)}\r\n`;
+      if (a.place_address) ics += `LOCATION:${esc(a.place_address)}\r\n`;
+      ics += `END:VEVENT\r\n`;
+    }
+
+    // Build all-day summary event if there are untimed activities or notes
+    if (untimed.length > 0 || notes.length > 0) {
+      const dayTitle = day.title || `Day ${day.day_number}`;
+      const endNext = new Date(day.date + 'T00:00:00');
+      endNext.setDate(endNext.getDate() + 1);
+      const endStr = endNext.toISOString().split('T')[0].replace(/-/g, '');
+
+      ics += `BEGIN:VEVENT\r\nUID:${uid(day.id, 'day')}\r\nDTSTAMP:${now}\r\n`;
+      ics += `DTSTART;VALUE=DATE:${fmtDate(day.date)}\r\nDTEND;VALUE=DATE:${endStr}\r\n`;
+      ics += `SUMMARY:${esc(dayTitle)}\r\n`;
+
+      let desc = '';
+      if (untimed.length > 0) {
+        desc += untimed.map(a => {
+          let line = `• ${a.place_name}`;
+          if (a.place_address) line += ` (${a.place_address})`;
+          if (a.notes) line += ` — ${a.notes}`;
+          return line;
+        }).join('\n');
+      }
+      if (notes.length > 0) {
+        if (desc) desc += '\n\n';
+        desc += 'Notes:\n' + notes.map(n => {
+          let line = n.time ? `${n.time} — ${n.text}` : `• ${n.text}`;
+          return line;
+        }).join('\n');
+      }
+      if (desc) ics += `DESCRIPTION:${esc(desc)}\r\n`;
+      ics += `END:VEVENT\r\n`;
+    }
+  }
+
   // Reservations as events
   for (const r of reservations) {
     if (!r.reservation_time) continue;
