@@ -25,7 +25,7 @@ interface PlaceFormData {
   website: string
 }
 
-const GOOGLE_MAPS_URL_RE = /^https?:\/\/(www\.)?(google\.[a-z.]+\/maps|maps\.google\.[a-z.]+|maps\.app\.goo\.gl|goo\.gl)/i
+const GOOGLE_MAPS_URL_RE = /^https?:\/\/(www\.)?(google\.[a-z]{2,3}(\.[a-z]{2})?\/maps|maps\.google\.[a-z]{2,3}(\.[a-z]{2})?(\/|$)|maps\.app\.goo\.gl|goo\.gl\/maps)/i
 
 const DEFAULT_FORM: PlaceFormData = {
   name: '',
