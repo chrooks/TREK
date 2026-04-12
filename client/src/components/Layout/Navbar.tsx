@@ -27,14 +27,13 @@ interface Addon {
 }
 
 export default function Navbar({ tripTitle, tripId, onBack, showBack, onShare }: NavbarProps): React.ReactElement {
-  const { user, logout } = useAuthStore()
+  const { user, logout, isPrerelease, appVersion } = useAuthStore()
   const { settings, updateSetting } = useSettingsStore()
   const { addons: allAddons, loadAddons } = useAddonStore()
   const { t, locale } = useTranslation()
   const navigate = useNavigate()
   const location = useLocation()
   const [userMenuOpen, setUserMenuOpen] = useState<boolean>(false)
-  const [appVersion, setAppVersion] = useState<string | null>(null)
   const darkMode = settings.dark_mode
   const dark = darkMode === true || darkMode === 'dark' || (darkMode === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches)
 
@@ -44,12 +43,6 @@ export default function Navbar({ tripTitle, tripId, onBack, showBack, onShare }:
   useEffect(() => {
     if (user) loadAddons()
   }, [user, location.pathname])
-
-  useEffect(() => {
-    import('../../api/client').then(({ authApi }) => {
-      authApi.getAppConfig?.().then(c => setAppVersion(c?.version)).catch(() => {})
-    })
-  }, [])
 
   const handleLogout = () => {
     logout()
@@ -153,6 +146,17 @@ export default function Navbar({ tripTitle, tripId, onBack, showBack, onShare }:
           <Users className="w-4 h-4" />
           <span className="hidden sm:inline">{t('nav.share')}</span>
         </button>
+      )}
+
+      {/* Prerelease badge */}
+      {isPrerelease && appVersion && (
+        <span
+          className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold flex-shrink-0"
+          style={{ background: 'rgba(245,158,11,0.15)', color: '#d97706', border: '1px solid rgba(245,158,11,0.3)' }}
+        >
+          <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: '#f59e0b' }} />
+          {appVersion}
+        </span>
       )}
 
       {/* Dark mode toggle (light ↔ dark, overrides auto) — hidden on mobile */}

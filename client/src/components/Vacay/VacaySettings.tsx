@@ -51,7 +51,7 @@ export default function VacaySettings({ onClose }: VacaySettingsProps) {
 
       {/* Weekend days selector */}
       {plan.block_weekends !== false && (
-        <div style={{ paddingLeft: 36 }}>
+        <div data-testid="weekend-days" style={{ paddingLeft: 36 }}>
           <p className="text-xs font-medium mb-2" style={{ color: 'var(--text-muted)' }}>{t('vacay.weekendDays')}</p>
           <div className="flex flex-wrap gap-1.5">
             {[
