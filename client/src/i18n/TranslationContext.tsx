@@ -14,25 +14,11 @@ import ar from './translations/ar'
 import br from './translations/br'
 import cs from './translations/cs'
 import pl from './translations/pl'
+import { SUPPORTED_LANGUAGES } from './supportedLanguages'
+
+export { SUPPORTED_LANGUAGES }
 
 type TranslationStrings = Record<string, string | { name: string; category: string }[]>
-
-export const SUPPORTED_LANGUAGES = [
-  { value: 'de', label: 'Deutsch' },
-  { value: 'en', label: 'English' },
-  { value: 'es', label: 'Español' },
-  { value: 'fr', label: 'Français' },
-  { value: 'hu', label: 'Magyar' },
-  { value: 'nl', label: 'Nederlands' },
-  { value: 'br', label: 'Português (Brasil)' },
-  { value: 'cs', label: 'Česky' },
-  { value: 'pl', label: 'Polski' },
-  { value: 'ru', label: 'Русский' },
-  { value: 'zh', label: '简体中文' },
-  { value: 'zh-TW', label: '繁體中文' },
-  { value: 'it', label: 'Italiano' },
-  { value: 'ar', label: 'العربية' },
-] as const
 
 const translations: Record<string, TranslationStrings> = { de, en, es, fr, hu, it, ru, zh, 'zh-TW': zhTw, nl, ar, br, cs, pl }
 const LOCALES: Record<string, string> = { de: 'de-DE', en: 'en-US', es: 'es-ES', fr: 'fr-FR', hu: 'hu-HU', it: 'it-IT', ru: 'ru-RU', zh: 'zh-CN', 'zh-TW': 'zh-TW', nl: 'nl-NL', ar: 'ar-SA', br: 'pt-BR', cs: 'cs-CZ', pl: 'pl-PL' }

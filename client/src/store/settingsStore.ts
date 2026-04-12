@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { settingsApi } from '../api/client'
 import type { Settings } from '../types'
 import { getApiErrorMessage } from '../types'
+import { SUPPORTED_LANGUAGE_CODES } from '../i18n/supportedLanguages'
 
 interface SettingsState {
   settings: Settings
@@ -64,8 +65,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   // Used for automatic detection (browser/server default) — only explicit user
   // choices via the UI should be persisted.
   setLanguageTransient: (lang: string) => {
-    const supported = ['de', 'en', 'es', 'fr', 'hu', 'nl', 'br', 'cs', 'pl', 'ru', 'zh', 'zh-TW', 'it', 'ar']
-    if (!supported.includes(lang)) return
+    if (!SUPPORTED_LANGUAGE_CODES.includes(lang)) return
     set((state) => ({ settings: { ...state.settings, language: lang } }))
   },
 
