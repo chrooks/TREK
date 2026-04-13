@@ -206,7 +206,7 @@ export default function TripPlannerPage(): React.ReactElement | null {
 
   useTripWebSocket(tripId)
 
-  const [mapCategoryFilter, setMapCategoryFilter] = useState<string>('')
+  const [mapCategoryFilter, setMapCategoryFilter] = useState<Set<string>>(new Set())
   const [mapPlacesFilter, setMapPlacesFilter] = useState<string>('all')
 
   const [expandedDayIds, setExpandedDayIds] = useState<Set<number> | null>(null)
@@ -239,7 +239,7 @@ export default function TripPlannerPage(): React.ReactElement | null {
 
     return places.filter(p => {
       if (!p.lat || !p.lng) return false
-      if (mapCategoryFilter && String(p.category_id) !== String(mapCategoryFilter)) return false
+      if (mapCategoryFilter.size > 0 && !mapCategoryFilter.has(String(p.category_id))) return false
       if (hiddenPlaceIds.has(p.id)) return false
       if (plannedIds && plannedIds.has(p.id)) return false
       return true
