@@ -925,6 +925,7 @@ const cs: Record<string, string | { name: string; category: string }[]> = {
   'places.endTimeBeforeStart': 'Čas konce je před časem začátku',
   'places.timeCollision': 'Časový překryv s:',
   'places.formWebsite': 'Webové stránky',
+  'places.formNotes': 'Poznámky',
   'places.formNotesPlaceholder': 'Osobní poznámky...',
   'places.formReservation': 'Rezervace',
   'places.reservationNotesPlaceholder': 'Poznámky k rezervaci, potvrzovací kód...',

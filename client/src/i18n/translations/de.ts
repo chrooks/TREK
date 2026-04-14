@@ -928,6 +928,7 @@ const de: Record<string, string | { name: string; category: string }[]> = {
   'places.endTimeBeforeStart': 'Endzeit liegt vor der Startzeit',
   'places.timeCollision': 'Zeitliche Überschneidung mit:',
   'places.formWebsite': 'Website',
+  'places.formNotes': 'Notizen',
   'places.formNotesPlaceholder': 'Persönliche Notizen...',
   'places.formReservation': 'Reservierung',
   'places.reservationNotesPlaceholder': 'Reservierungsnotizen, Bestätigungsnummer...',

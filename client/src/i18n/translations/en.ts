@@ -950,6 +950,7 @@ const en: Record<string, string | { name: string; category: string }[]> = {
   'places.endTimeBeforeStart': 'End time is before start time',
   'places.timeCollision': 'Time overlap with:',
   'places.formWebsite': 'Website',
+  'places.formNotes': 'Notes',
   'places.formNotesPlaceholder': 'Personal notes...',
   'places.formReservation': 'Reservation',
   'places.reservationNotesPlaceholder': 'Reservation notes, confirmation number...',

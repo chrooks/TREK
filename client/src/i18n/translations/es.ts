@@ -900,6 +900,7 @@ const es: Record<string, string> = {
   'places.endTimeBeforeStart': 'La hora de fin es anterior a la de inicio',
   'places.timeCollision': 'Solapamiento horario con:',
   'places.formWebsite': 'Página web',
+  'places.formNotes': 'Notas',
   'places.formNotesPlaceholder': 'Notas personales...',
   'places.formReservation': 'Reserva',
   'places.reservationNotesPlaceholder': 'Notas de reserva, número de confirmación...',

@@ -949,6 +949,7 @@ const zhTw: Record<string, string> = {
   'places.endTimeBeforeStart': '結束時間早於開始時間',
   'places.timeCollision': '時間衝突：',
   'places.formWebsite': '網站',
+  'places.formNotes': '備註',
   'places.formNotesPlaceholder': '個人備註...',
   'places.formReservation': '預訂',
   'places.reservationNotesPlaceholder': '預訂備註、確認號...',

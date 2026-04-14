@@ -925,6 +925,7 @@ const hu: Record<string, string | { name: string; category: string }[]> = {
   'places.endTimeBeforeStart': 'A befejezési idő a kezdési idő előtt van',
   'places.timeCollision': 'Időbeli átfedés:',
   'places.formWebsite': 'Weboldal',
+  'places.formNotes': 'Jegyzetek',
   'places.formNotesPlaceholder': 'Személyes jegyzetek...',
   'places.formReservation': 'Foglalás',
   'places.reservationNotesPlaceholder': 'Foglalási jegyzetek, visszaigazolási szám...',

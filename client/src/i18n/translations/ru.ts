@@ -924,6 +924,7 @@ const ru: Record<string, string> = {
   'places.endTimeBeforeStart': 'Время окончания раньше времени начала',
   'places.timeCollision': 'Пересечение по времени с:',
   'places.formWebsite': 'Сайт',
+  'places.formNotes': 'Заметки',
   'places.formNotesPlaceholder': 'Личные заметки...',
   'places.formReservation': 'Бронирование',
   'places.reservationNotesPlaceholder': 'Заметки о бронировании, номер подтверждения...',

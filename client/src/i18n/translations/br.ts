@@ -897,6 +897,7 @@ const br: Record<string, string | { name: string; category: string }[]> = {
   'places.endTimeBeforeStart': 'O horário de fim é antes do início',
   'places.timeCollision': 'Sobreposição de horário com:',
   'places.formWebsite': 'Site',
+  'places.formNotes': 'Notas',
   'places.formNotesPlaceholder': 'Notas pessoais...',
   'places.formReservation': 'Reserva',
   'places.reservationNotesPlaceholder': 'Notas da reserva, código de confirmação...',

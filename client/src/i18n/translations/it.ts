@@ -925,6 +925,7 @@ const it: Record<string, string | { name: string; category: string }[]> = {
   'places.endTimeBeforeStart': 'L\'ora di fine è precedente all\'ora di inizio',
   'places.timeCollision': 'Sovrapposizione di orario con:',
   'places.formWebsite': 'Sito web',
+  'places.formNotes': 'Note',
   'places.formNotesPlaceholder': 'Note personali...',
   'places.formReservation': 'Prenotazione',
   'places.reservationNotesPlaceholder': 'Note della prenotazione, numero di conferma...',

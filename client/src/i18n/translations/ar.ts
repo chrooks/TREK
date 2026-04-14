@@ -927,6 +927,7 @@ const ar: Record<string, string | { name: string; category: string }[]> = {
   'places.endTimeBeforeStart': 'وقت النهاية قبل وقت البداية',
   'places.timeCollision': 'تداخل في الوقت مع:',
   'places.formWebsite': 'الموقع الإلكتروني',
+  'places.formNotes': 'ملاحظات',
   'places.formNotesPlaceholder': 'ملاحظات شخصية...',
   'places.formReservation': 'حجز',
   'places.reservationNotesPlaceholder': 'ملاحظات الحجز، رقم التأكيد...',

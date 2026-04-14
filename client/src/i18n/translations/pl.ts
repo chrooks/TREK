@@ -886,6 +886,7 @@ const pl: Record<string, string | { name: string; category: string }[]> = {
   'places.endTimeBeforeStart': 'Godzina zakończenia jest przed godziną rozpoczęcia',
   'places.timeCollision': 'Nakładanie się godzin z:',
   'places.formWebsite': 'Strona internetowa',
+  'places.formNotes': 'Notatki',
   'places.formNotesPlaceholder': 'Osobiste notatki...',
   'places.formReservation': 'Rezerwacja',
   'places.reservationNotesPlaceholder': 'Notatki z rezerwacji, numer potwierdzenia...',

@@ -924,6 +924,7 @@ const fr: Record<string, string> = {
   'places.endTimeBeforeStart': 'L\'heure de fin est antérieure à l\'heure de début',
   'places.timeCollision': 'Chevauchement horaire avec :',
   'places.formWebsite': 'Site web',
+  'places.formNotes': 'Notes',
   'places.formNotesPlaceholder': 'Notes personnelles…',
   'places.formReservation': 'Réservation',
   'places.reservationNotesPlaceholder': 'Notes de réservation, numéro de confirmation…',

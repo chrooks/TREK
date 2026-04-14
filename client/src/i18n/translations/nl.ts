@@ -924,6 +924,7 @@ const nl: Record<string, string> = {
   'places.endTimeBeforeStart': 'Eindtijd is vóór de starttijd',
   'places.timeCollision': 'Tijdoverlap met:',
   'places.formWebsite': 'Website',
+  'places.formNotes': 'Notities',
   'places.formNotesPlaceholder': 'Persoonlijke notities...',
   'places.formReservation': 'Reservering',
   'places.reservationNotesPlaceholder': 'Reserveringsnotities, bevestigingsnummer...',

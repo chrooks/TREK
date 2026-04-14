@@ -43,18 +43,24 @@ export interface Place {
   trip_id: number
   name: string
   description: string | null
+  notes: string | null
   lat: number | null
   lng: number | null
   address: string | null
   category_id: number | null
   icon: string | null
   price: string | null
+  currency: string | null
   image_url: string | null
   google_place_id: string | null
   osm_id: string | null
   route_geometry: string | null
   place_time: string | null
   end_time: string | null
+  duration_minutes: number | null
+  transport_mode: string | null
+  website: string | null
+  phone: string | null
   created_at: string
 }
 
