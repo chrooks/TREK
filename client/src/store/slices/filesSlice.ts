@@ -1,4 +1,5 @@
 import { filesApi } from '../../api/client'
+import { fileRepo } from '../../repo/fileRepo'
 import type { StoreApi } from 'zustand'
 import type { TripStoreState } from '../tripStore'
 import type { TripFile } from '../../types'
@@ -16,7 +17,7 @@ export interface FilesSlice {
 export const createFilesSlice = (set: SetState, get: GetState): FilesSlice => ({
   loadFiles: async (tripId) => {
     try {
-      const data = await filesApi.list(tripId)
+      const data = await fileRepo.list(tripId)
       set({ files: data.files })
     } catch (err: unknown) {
       console.error('Failed to load files:', err)

@@ -1,4 +1,5 @@
 import { reservationsApi } from '../../api/client'
+import { reservationRepo } from '../../repo/reservationRepo'
 import type { StoreApi } from 'zustand'
 import type { TripStoreState } from '../tripStore'
 import type { Reservation } from '../../types'
@@ -18,7 +19,7 @@ export interface ReservationsSlice {
 export const createReservationsSlice = (set: SetState, get: GetState): ReservationsSlice => ({
   loadReservations: async (tripId) => {
     try {
-      const data = await reservationsApi.list(tripId)
+      const data = await reservationRepo.list(tripId)
       set({ reservations: data.reservations })
     } catch (err: unknown) {
       console.error('Failed to load reservations:', err)

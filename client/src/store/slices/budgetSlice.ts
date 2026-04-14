@@ -1,4 +1,5 @@
 import { budgetApi } from '../../api/client'
+import { budgetRepo } from '../../repo/budgetRepo'
 import type { StoreApi } from 'zustand'
 import type { TripStoreState } from '../tripStore'
 import type { BudgetItem, BudgetMember } from '../../types'
@@ -21,7 +22,7 @@ export interface BudgetSlice {
 export const createBudgetSlice = (set: SetState, get: GetState): BudgetSlice => ({
   loadBudgetItems: async (tripId) => {
     try {
-      const data = await budgetApi.list(tripId)
+      const data = await budgetRepo.list(tripId)
       set({ budgetItems: data.items })
     } catch (err: unknown) {
       console.error('Failed to load budget items:', err)
