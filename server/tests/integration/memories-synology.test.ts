@@ -57,10 +57,10 @@ vi.mock('../../src/utils/ssrfGuard', async () => {
       apiName = params.get('api') || '';
     } catch {}
     if (!apiName && init?.body) {
-      apiName = params.get('api') || '';
       params = init.body instanceof URLSearchParams
         ? init.body
         : new URLSearchParams(String(init.body));
+      apiName = params.get('api') || '';
     }
 
     // Auth login — used by settings save, status, test-connection
