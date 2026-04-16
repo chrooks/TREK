@@ -80,7 +80,8 @@ router.get('/albums', authenticate, async (req: Request, res: Response) => {
 
 router.get('/albums/:albumId/photos', authenticate, async (req: Request, res: Response) => {
     const authReq = req as AuthRequest;
-    handleServiceResult(res, await getSynologyAlbumPhotos(authReq.user.id, req.params.albumId));
+    const passphrase = req.query.passphrase ? String(req.query.passphrase) : undefined;
+    handleServiceResult(res, await getSynologyAlbumPhotos(authReq.user.id, req.params.albumId, passphrase));
 });
 
 router.post('/trips/:tripId/album-links/:linkId/sync', authenticate, async (req: Request, res: Response) => {
@@ -115,12 +116,13 @@ router.post('/search', authenticate, async (req: Request, res: Response) => {
 router.get('/assets/:tripId/:photoId/:ownerId/info', authenticate, async (req: Request, res: Response) => {
     const authReq = req as AuthRequest;
     const { tripId, photoId, ownerId } = req.params;
+    const passphrase = req.query.passphrase ? String(req.query.passphrase) : undefined;
 
     if (!canAccessUserPhoto(authReq.user.id, Number(ownerId), tripId, photoId, 'synologyphotos')) {
         handleServiceResult(res, fail('You don\'t have access to this photo', 403));
     }
     else {
-        handleServiceResult(res, await getSynologyAssetInfo(authReq.user.id, photoId, Number(ownerId)));
+        handleServiceResult(res, await getSynologyAssetInfo(authReq.user.id, photoId, Number(ownerId), passphrase));
     }
 });
 
@@ -130,6 +132,7 @@ router.get('/assets/:tripId/:photoId/:ownerId/:kind', authenticate, async (req: 
     const VALID_SIZES = ['sm', 'm', 'xl'] as const;
     const rawSize = String(req.query.size ?? 'sm');
     const size = VALID_SIZES.includes(rawSize as any) ? rawSize : 'sm';
+    const passphrase = req.query.passphrase ? String(req.query.passphrase) : undefined;
 
     if (kind !== 'thumbnail' && kind !== 'original') {
         return handleServiceResult(res, fail('Invalid asset kind', 400));
@@ -139,7 +142,7 @@ router.get('/assets/:tripId/:photoId/:ownerId/:kind', authenticate, async (req: 
         handleServiceResult(res, fail('You don\'t have access to this photo', 403));
     }
     else{
-        await streamSynologyAsset(res, authReq.user.id, Number(ownerId), photoId, kind as 'thumbnail' | 'original', String(size));
+        await streamSynologyAsset(res, authReq.user.id, Number(ownerId), photoId, kind as 'thumbnail' | 'original', String(size), passphrase);
     }
 
 });

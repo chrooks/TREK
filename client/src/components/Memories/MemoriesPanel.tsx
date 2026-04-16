@@ -85,7 +85,7 @@ export default function MemoriesPanel({ tripId, startDate, endDate }: MemoriesPa
 
   // Album linking
   const [showAlbumPicker, setShowAlbumPicker] = useState(false)
-  const [albums, setAlbums] = useState<{ id: string; albumName: string; assetCount: number }[]>([])
+  const [albums, setAlbums] = useState<{ id: string; albumName: string; assetCount: number; passphrase?: string }[]>([])
   const [albumsLoading, setAlbumsLoading] = useState(false)
   const [albumLinks, setAlbumLinks] = useState<{ id: number; provider: string; album_id: string; album_name: string; user_id: number; username: string; sync_enabled: number; last_synced_at: string | null }[]>([])
   const [syncing, setSyncing] = useState<number | null>(null)
@@ -141,7 +141,7 @@ export default function MemoriesPanel({ tripId, startDate, endDate }: MemoriesPa
     await loadAlbums(selectedProvider)
   }
 
-  const linkAlbum = async (albumId: string, albumName: string) => {
+  const linkAlbum = async (albumId: string, albumName: string, passphrase?: string) => {
     if (!selectedProvider) {
       toast.error(t('memories.error.linkAlbum'))
       return
@@ -152,6 +152,7 @@ export default function MemoriesPanel({ tripId, startDate, endDate }: MemoriesPa
         album_id: albumId,
         album_name: albumName,
         provider: selectedProvider,
+        ...(passphrase ? { passphrase } : {}),
       })
       setShowAlbumPicker(false)
       await loadAlbumLinks()
@@ -489,7 +490,7 @@ export default function MemoriesPanel({ tripId, startDate, endDate }: MemoriesPa
               {albums.map(album => {
                 const isLinked = linkedIds.has(album.id)
                 return (
-                  <button key={album.id} onClick={() => !isLinked && linkAlbum(album.id, album.albumName)}
+                  <button key={album.id} onClick={() => !isLinked && linkAlbum(album.id, album.albumName, album.passphrase)}
                     disabled={isLinked}
                     style={{
                       display: 'flex', alignItems: 'center', gap: 12, width: '100%', padding: '12px 14px',

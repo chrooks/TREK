@@ -432,31 +432,37 @@ export async function testSynologyConnection(userId: number, synologyUrl: string
     return success({ connected: true, user: { name: synologyUsername } });
 }
 
+async function _fetchAllSynologyAlbums(userId: number, baseParams: ApiCallParams): Promise<ServiceResult<any[]>> {
+    const pageSize = 100;
+    const all: any[] = [];
+    let offset = 0;
+    while (true) {
+        const result = await _requestSynologyApi<{ list: any[] }>(userId, { ...baseParams, offset, limit: pageSize });
+        if (!result.success) return result as ServiceResult<any[]>;
+        const items = result.data.list || [];
+        all.push(...items);
+        if (items.length < pageSize) break;
+        offset += pageSize;
+    }
+    return success(all);
+}
+
 export async function listSynologyAlbums(userId: number): Promise<ServiceResult<AlbumsList>> {
     const [personal, shared, sharedWithMe] = await Promise.allSettled([
-        _requestSynologyApi<{ list: any[] }>(userId, {
-            api: 'SYNO.Foto.Browse.Album', method: 'list', version: 4,
-            offset: 0, limit: 100,
-        }),
-        _requestSynologyApi<{ list: any[] }>(userId, {
-            api: 'SYNO.Foto.Browse.Album', method: 'list', version: 4,
-            offset: 0, limit: 100, category: 'shared',
-        }),
-        _requestSynologyApi<{ list: any[] }>(userId, {
-            api: 'SYNO.Foto.Sharing.Misc', method: 'list_shared_with_me_album', version: 1,
-            offset: 0, limit: 100, additional: ['thumbnail', 'sharing_info'],
-        }),
+        _fetchAllSynologyAlbums(userId, { api: 'SYNO.Foto.Browse.Album', method: 'list', version: 4 }),
+        _fetchAllSynologyAlbums(userId, { api: 'SYNO.Foto.Browse.Album', method: 'list', version: 4, category: 'shared' }),
+        _fetchAllSynologyAlbums(userId, { api: 'SYNO.Foto.Sharing.Misc', method: 'list_shared_with_me_album', version: 1, additional: ['thumbnail', 'sharing_info'] }),
     ]);
 
     const map = new Map<string, { id: string; albumName: string; assetCount: number; passphrase?: string }>();
 
-    const addAlbums = (result: PromiseSettledResult<ServiceResult<{ list: any[] }>>, extractPassphrase: (a: any) => string | undefined) => {
+    const addAlbums = (result: PromiseSettledResult<ServiceResult<any[]>>, extractPassphrase: (a: any) => string | undefined) => {
         if (result.status === 'rejected') return;
         if (!result.value.success) {
             console.warn('[Synology] album list partial failure:', (result.value as any).error?.message);
             return;
         }
-        for (const album of (result.value as any).data?.list ?? []) {
+        for (const album of result.value.data ?? []) {
             const id = String(album.id);
             const passphrase = extractPassphrase(album);
             map.set(id, { id, albumName: album.name || '', assetCount: album.item_count || 0, passphrase });
@@ -478,7 +484,7 @@ export async function listSynologyAlbums(userId: number): Promise<ServiceResult<
 
 export async function getSynologyAlbumPhotos(userId: number, albumId: string, passphrase?: string): Promise<ServiceResult<AssetsList>> {
     const allItems: SynologyPhotoItem[] = [];
-    const pageSize = 1000;
+    const pageSize = 50;
     let offset = 0;
 
     while (true) {
@@ -508,7 +514,7 @@ export async function syncSynologyAlbumLink(userId: number, tripId: string, link
     const { albumId, passphrase } = response.data;
 
     const allItems: SynologyPhotoItem[] = [];
-    const pageSize = 1000;
+    const pageSize = 50;
     let offset = 0;
 
     while (true) {
@@ -575,7 +581,7 @@ export async function searchSynologyPhotos(userId: number, from?: string, to?: s
     });
 }
 
-export async function getSynologyAssetInfo(userId: number, photoId: string, targetUserId?: number, passphrase?: string): Promise<ServiceResult<AssetInfo>> {
+export async function getSynologyAssetInfo(userId: number, photoId: string, targetUserId: number, passphrase?: string): Promise<ServiceResult<AssetInfo>> {
     const parsedId = _splitPackedSynologyId(photoId);
     if (!parsedId) return fail('Invalid photo ID format', 400);
     const infoParams: ApiCallParams = {

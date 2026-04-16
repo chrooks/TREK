@@ -84,7 +84,8 @@ router.get('/unified/trips/:tripId/album-links', authenticate, (req: Request, re
 router.post('/unified/trips/:tripId/album-links', authenticate, async (req: Request, res: Response) => {
     const authReq = req as AuthRequest;
     const { tripId } = req.params;
-    const result = createTripAlbumLink(tripId, authReq.user.id, req.body?.provider, req.body?.album_id, req.body?.album_name);
+    const passphrase = req.body?.passphrase ? String(req.body.passphrase) : undefined;
+    const result = createTripAlbumLink(tripId, authReq.user.id, req.body?.provider, req.body?.album_id, req.body?.album_name, passphrase);
     if ('error' in result) return res.status(result.error.status).json({ error: result.error.message });
     res.json({ success: true });
 });

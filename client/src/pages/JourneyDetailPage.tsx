@@ -1455,8 +1455,9 @@ function ProviderPicker({ provider, userId, entries, trips, existingAssetIds, on
   const { t } = useTranslation()
   const [filter, setFilter] = useState<'trip' | 'custom' | 'all' | 'album'>('trip')
   const [photos, setPhotos] = useState<any[]>([])
-  const [albums, setAlbums] = useState<any[]>([])
+  const [albums, setAlbums] = useState<Array<{ id: string; albumName: string; assetCount: number; passphrase?: string }>>([])
   const [selectedAlbum, setSelectedAlbum] = useState<string | null>(null)
+  const [selectedAlbumPassphrase, setSelectedAlbumPassphrase] = useState<string | undefined>(undefined)
   const [loading, setLoading] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
   const [hasMore, setHasMore] = useState(false)
@@ -1518,13 +1519,14 @@ function ProviderPicker({ provider, userId, entries, trips, existingAssetIds, on
     searchPhotos(searchFrom, searchTo, searchPage + 1, true)
   }
 
-  const loadAlbumPhotos = async (albumId: string) => {
+  const loadAlbumPhotos = async (album: { id: string; passphrase?: string }) => {
     const signal = cancelPending()
     setLoading(true)
     setPhotos([])
     setHasMore(false)
     try {
-      const res = await fetch(`/api/integrations/memories/${provider}/albums/${albumId}/photos`, { credentials: 'include', signal })
+      const qs = album.passphrase ? `?passphrase=${encodeURIComponent(album.passphrase)}` : ''
+      const res = await fetch(`/api/integrations/memories/${provider}/albums/${album.id}/photos${qs}`, { credentials: 'include', signal })
       if (res.ok) setPhotos((await res.json()).assets || [])
     } catch (e: any) { if (e.name !== 'AbortError') {} }
     if (!signal.aborted) setLoading(false)
@@ -1643,7 +1645,7 @@ function ProviderPicker({ provider, userId, entries, trips, existingAssetIds, on
                 {albums.map((a: any) => (
                   <button
                     key={a.id}
-                    onClick={() => { setSelectedAlbum(a.id); loadAlbumPhotos(a.id) }}
+                    onClick={() => { setSelectedAlbum(a.id); setSelectedAlbumPassphrase(a.passphrase); loadAlbumPhotos(a) }}
                     className={`px-2.5 py-1 rounded-lg text-[11px] font-medium whitespace-nowrap flex-shrink-0 border ${
                       selectedAlbum === a.id
                         ? 'bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 border-zinc-900 dark:border-white'
@@ -1773,13 +1775,13 @@ function ProviderPicker({ provider, userId, entries, trips, existingAssetIds, on
                           }`}
                         >
                           <img
-                            src={`/api/integrations/memories/${provider}/assets/0/${asset.id}/${userId}/thumbnail`}
+                            src={`/api/integrations/memories/${provider}/assets/0/${asset.id}/${userId}/thumbnail${selectedAlbumPassphrase ? `?passphrase=${encodeURIComponent(selectedAlbumPassphrase)}` : ''}`}
                             alt=""
                             className="w-full h-full object-cover"
                             loading="lazy"
                             onError={e => {
                               const img = e.currentTarget
-                              const original = `/api/integrations/memories/${provider}/assets/0/${asset.id}/${userId}/original`
+                              const original = `/api/integrations/memories/${provider}/assets/0/${asset.id}/${userId}/original${selectedAlbumPassphrase ? `?passphrase=${encodeURIComponent(selectedAlbumPassphrase)}` : ''}`
                               if (!img.src.includes('/original')) img.src = original
                             }}
                           />

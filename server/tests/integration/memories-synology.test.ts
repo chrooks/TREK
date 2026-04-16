@@ -1149,9 +1149,15 @@ describe('Synology SSRF blocked error handling', () => {
 
     const { SsrfBlockedError: SsrfErr } = await import('../../src/utils/ssrfGuard');
 
-    // Auth succeeds, but the first album-list call throws SsrfBlockedError.
-    // The other two parallel album sources fall through to the default mock and succeed.
-    // listSynologyAlbums uses Promise.allSettled so a partial failure is logged and skipped.
+    const emptyAlbumResponse = {
+      ok: true, status: 200,
+      headers: { get: () => 'application/json' },
+      json: async () => ({ success: true, data: { list: [{ id: 99, name: 'Shared Album', item_count: 2, passphrase: 'pp-test' }] } }),
+      body: null,
+    } as any;
+
+    // Auth succeeds, personal album source throws SSRF, shared + shared-with-me succeed.
+    // listSynologyAlbums uses Promise.allSettled so the SSRF failure is logged and skipped.
     vi.mocked(safeFetch)
       .mockResolvedValueOnce({
         ok: true, status: 200,
@@ -1159,15 +1165,17 @@ describe('Synology SSRF blocked error handling', () => {
         json: async () => ({ success: true, data: { sid: 'sid-x' } }),
         body: null,
       } as any)
-      .mockRejectedValueOnce(new SsrfErr('Private IP detected'));
+      .mockRejectedValueOnce(new SsrfErr('Private IP detected'))
+      .mockResolvedValueOnce(emptyAlbumResponse)
+      .mockResolvedValueOnce(emptyAlbumResponse);
 
     const res = await request(app)
       .get(`${SYNO}/albums`)
       .set('Cookie', authCookie(user.id));
 
-    // The personal album source failed, but the other sources succeeded via the default mock.
-    // listSynologyAlbums is resilient: partial failure is logged, remaining albums returned.
+    // Personal failed (SSRF), shared sources returned an album — 200 with non-empty list.
     expect(res.status).toBe(200);
     expect(Array.isArray(res.body.albums)).toBe(true);
+    expect(res.body.albums.length).toBeGreaterThan(0);
   });
 });

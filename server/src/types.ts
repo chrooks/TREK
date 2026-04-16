@@ -350,6 +350,7 @@ export interface TrekPhoto {
   thumbnail_path?: string | null;
   width?: number | null;
   height?: number | null;
+  passphrase?: string | null;
   created_at: string;
 }
 

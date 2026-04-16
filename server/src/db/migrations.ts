@@ -1629,6 +1629,11 @@ function runMigrations(db: Database.Database): void {
         )
       `);
     },
+    // Migration 104: Passphrase support for Synology shared-album links (#689)
+    () => {
+      try { db.exec('ALTER TABLE trip_album_links ADD COLUMN passphrase TEXT DEFAULT NULL'); } catch (err: any) { if (!err.message?.includes('duplicate column name')) throw err; }
+      try { db.exec('ALTER TABLE trek_photos ADD COLUMN passphrase TEXT DEFAULT NULL'); } catch (err: any) { if (!err.message?.includes('duplicate column name')) throw err; }
+    },
   ];
 
   if (currentVersion < migrations.length) {
