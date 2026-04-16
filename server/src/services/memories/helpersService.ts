@@ -43,6 +43,7 @@ export function handleServiceResult<T>(res: Response, result: ServiceResult<T>):
 export type Selection = {
     provider: string;
     asset_ids: string[];
+    passphrase?: string;
 };
 
 export type StatusResult = {

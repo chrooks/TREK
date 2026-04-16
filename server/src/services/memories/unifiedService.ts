@@ -9,6 +9,7 @@ import {
   Selection,
 } from './helpersService';
 import { getOrCreateTrekPhoto } from './photoResolverService';
+import { encrypt_api_key } from '../apiKeyCrypto';
 
 
 function _providers(): Array<{id: string; enabled: boolean}> {
@@ -104,13 +105,13 @@ export function listTripAlbumLinks(tripId: string, userId: number): ServiceResul
 //-----------------------------------------------
 // managing photos in trip
 
-function _addTripPhoto(tripId: string, userId: number, provider: string, assetId: string, shared: boolean, albumLinkId?: string): ServiceResult<boolean> {
+function _addTripPhoto(tripId: string, userId: number, provider: string, assetId: string, shared: boolean, albumLinkId?: string, passphrase?: string): ServiceResult<boolean> {
   const providerResult = _validProvider(provider);
   if (!providerResult.success) {
     return providerResult as ServiceResult<boolean>;
   }
   try {
-    const photoId = getOrCreateTrekPhoto(provider, assetId, userId);
+    const photoId = getOrCreateTrekPhoto(provider, assetId, userId, passphrase);
     const result = db.prepare(
       'INSERT OR IGNORE INTO trip_photos (trip_id, user_id, photo_id, shared, album_link_id) VALUES (?, ?, ?, ?, ?)'
     ).run(tripId, userId, photoId, shared ? 1 : 0, albumLinkId || null);
@@ -147,7 +148,7 @@ export async function addTripPhotos(
     for (const raw of selection.asset_ids) {
       const assetId = String(raw || '').trim();
       if (!assetId) continue;
-      const result = _addTripPhoto(tripId, userId, selection.provider, assetId, shared, albumLinkId);
+      const result = _addTripPhoto(tripId, userId, selection.provider, assetId, shared, albumLinkId, selection.passphrase);
       if (!result.success) {
         return result as ServiceResult<{ added: number; shared: boolean }>;
       }
@@ -222,7 +223,7 @@ export function removeTripPhoto(
 // ----------------------------------------------
 // managing album links in trip
 
-export function createTripAlbumLink(tripId: string, userId: number, providerRaw: unknown, albumIdRaw: unknown, albumNameRaw: unknown): ServiceResult<true> {
+export function createTripAlbumLink(tripId: string, userId: number, providerRaw: unknown, albumIdRaw: unknown, albumNameRaw: unknown, passphrase?: string): ServiceResult<true> {
   const access = canAccessTrip(tripId, userId);
   if (!access) {
     return fail('Trip not found or access denied', 404);
@@ -246,9 +247,10 @@ export function createTripAlbumLink(tripId: string, userId: number, providerRaw:
   }
 
   try {
+    const encryptedPassphrase = passphrase ? encrypt_api_key(passphrase) : null;
     const result = db.prepare(
-      'INSERT OR IGNORE INTO trip_album_links (trip_id, user_id, provider, album_id, album_name) VALUES (?, ?, ?, ?, ?)'
-    ).run(tripId, userId, provider, albumId, albumName);
+      'INSERT OR IGNORE INTO trip_album_links (trip_id, user_id, provider, album_id, album_name, passphrase) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run(tripId, userId, provider, albumId, albumName, encryptedPassphrase);
 
     if (result.changes === 0) {
       return fail('Album already linked', 409);

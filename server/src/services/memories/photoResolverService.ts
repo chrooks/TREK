@@ -7,6 +7,7 @@ import { streamImmichAsset, getAssetInfo as getImmichAssetInfo } from './immichS
 import { streamSynologyAsset, getSynologyAssetInfo } from './synologyService';
 import type { ServiceResult, AssetInfo } from './helpersService';
 import { fail, success } from './helpersService';
+import { encrypt_api_key, decrypt_api_key } from '../apiKeyCrypto';
 
 // ── Lookup / Register ────────────────────────────────────────────────────
 
@@ -14,15 +15,22 @@ export function getOrCreateTrekPhoto(
   provider: string,
   assetId: string,
   ownerId: number,
+  passphrase?: string,
 ): number {
   const existing = db.prepare(
     'SELECT id FROM trek_photos WHERE provider = ? AND asset_id = ? AND owner_id = ?'
   ).get(provider, assetId, ownerId) as { id: number } | undefined;
-  if (existing) return existing.id;
+  if (existing) {
+    if (passphrase) {
+      db.prepare('UPDATE trek_photos SET passphrase = ? WHERE id = ? AND passphrase IS NULL')
+        .run(encrypt_api_key(passphrase), existing.id);
+    }
+    return existing.id;
+  }
 
   const res = db.prepare(
-    'INSERT INTO trek_photos (provider, asset_id, owner_id) VALUES (?, ?, ?)'
-  ).run(provider, assetId, ownerId);
+    'INSERT INTO trek_photos (provider, asset_id, owner_id, passphrase) VALUES (?, ?, ?, ?)'
+  ).run(provider, assetId, ownerId, passphrase ? encrypt_api_key(passphrase) : null);
   return Number(res.lastInsertRowid);
 }
 
@@ -77,7 +85,8 @@ export async function streamPhoto(
       return;
     }
     case 'synologyphotos': {
-      await streamSynologyAsset(res, userId, photo.owner_id!, photo.asset_id!, kind);
+      const passphrase = photo.passphrase ? (decrypt_api_key(photo.passphrase) || undefined) : undefined;
+      await streamSynologyAsset(res, userId, photo.owner_id!, photo.asset_id!, kind, undefined, passphrase);
       return;
     }
     default:
@@ -112,7 +121,8 @@ export async function getPhotoInfo(
       return success(result.data as AssetInfo);
     }
     case 'synologyphotos': {
-      return getSynologyAssetInfo(userId, photo.asset_id!, photo.owner_id!);
+      const passphrase = photo.passphrase ? (decrypt_api_key(photo.passphrase) || undefined) : undefined;
+      return getSynologyAssetInfo(userId, photo.asset_id!, photo.owner_id!, passphrase);
     }
     default:
       return fail(`Unknown provider: ${photo.provider}`, 400);

@@ -704,6 +704,7 @@ describe('Synology auth checks', () => {
 // ── Album sync ────────────────────────────────────────────────────────────────
 
 import { addAlbumLink } from '../helpers/factories';
+import { encrypt_api_key } from '../../src/services/apiKeyCrypto';
 
 describe('Synology syncSynologyAlbumLink', () => {
   it('SYNO-050 — POST sync happy path: trip owner with album link saves photos to DB', async () => {
@@ -764,6 +765,70 @@ describe('Synology syncSynologyAlbumLink', () => {
 
   it('SYNO-053 — POST sync without auth returns 401', async () => {
     expect((await request(app).post(`${SYNO}/trips/1/album-links/1/sync`)).status).toBe(401);
+  });
+
+  it('SYNO-054 — POST sync with passphrase link: uses passphrase in item-list call and persists encrypted passphrase on trek_photos', async () => {
+    const { user } = createUser(testDb);
+    const trip = createTrip(testDb, user.id);
+    setSynologyCredentials(testDb, user.id, 'https://synology.example.com', 'admin', 'pass');
+    testDb.prepare("UPDATE photo_providers SET enabled = 1 WHERE id = 'synologyphotos'").run();
+
+    // Insert a link with an encrypted passphrase directly into the DB.
+    const rawPassphrase = 'syno-share-pass-abc';
+    const result = testDb.prepare(
+      'INSERT INTO trip_album_links (trip_id, user_id, provider, album_id, album_name, passphrase) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run(trip.id, user.id, 'synologyphotos', '99', 'Shared Album', encrypt_api_key(rawPassphrase));
+    const link = testDb.prepare('SELECT * FROM trip_album_links WHERE id = ?').get(result.lastInsertRowid) as any;
+
+    // Override safeFetch so browse-item only succeeds when called with the passphrase param.
+    vi.mocked(safeFetch).mockImplementation(async (url: any, init?: any) => {
+      const bodyParams = init?.body instanceof URLSearchParams
+        ? init.body
+        : new URLSearchParams(String(init?.body ?? ''));
+      const apiName = bodyParams.get('api') || (new URL(String(url)).searchParams.get('api') ?? '');
+
+      if (apiName === 'SYNO.API.Auth') {
+        return { ok: true, status: 200, headers: { get: () => 'application/json' }, json: async () => ({ success: true, data: { sid: 'fake-sid-054' } }), body: null } as any;
+      }
+
+      if (apiName === 'SYNO.Foto.Browse.Item') {
+        // Only respond successfully when the passphrase param is present.
+        if (bodyParams.get('passphrase') !== rawPassphrase) {
+          return { ok: true, status: 200, headers: { get: () => 'application/json' }, json: async () => ({ success: false, error: { code: 105 } }), body: null } as any;
+        }
+        return {
+          ok: true, status: 200,
+          headers: { get: () => 'application/json' },
+          json: async () => ({
+            success: true,
+            data: {
+              list: [{ id: 201, filename: 'shared.jpg', filesize: 512000, time: 1717228800, additional: { thumbnail: { cache_key: '201_sharedkey' } } }],
+            },
+          }),
+          body: null,
+        } as any;
+      }
+
+      return Promise.reject(new Error(`SYNO-054: unexpected safeFetch call: api=${apiName}`));
+    });
+
+    const res = await request(app)
+      .post(`${SYNO}/trips/${trip.id}/album-links/${link.id}/sync`)
+      .set('Cookie', authCookie(user.id));
+
+    expect(res.status).toBe(200);
+    expect(res.body.added).toBeGreaterThan(0);
+
+    // The trek_photos row for the synced photo must have a non-null passphrase.
+    const photo = testDb.prepare(`
+      SELECT tkp.passphrase FROM trip_photos tp
+      JOIN trek_photos tkp ON tkp.id = tp.photo_id
+      WHERE tp.trip_id = ? AND tp.user_id = ?
+      LIMIT 1
+    `).get(trip.id, user.id) as { passphrase: string | null } | undefined;
+
+    expect(photo).toBeDefined();
+    expect(photo!.passphrase).not.toBeNull();
   });
 });
 
