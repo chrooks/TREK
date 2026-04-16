@@ -112,13 +112,20 @@ describe('ModalRenderer', () => {
   });
 
   it('FE-SN-MODAL-005: CTA nav button dismisses all notices (not just current)', async () => {
-    const noticeA = makeNotice({ id: 'n-a', titleKey: 'Notice A', cta: { kind: 'nav', labelKey: 'Go to trips', href: '/trips' } });
-    const noticeB = makeNotice({ id: 'n-b', titleKey: 'Notice B' });
+    // CTA is only shown on the last page; navigate there first
+    const noticeA = makeNotice({ id: 'n-a', titleKey: 'Notice A' });
+    const noticeB = makeNotice({ id: 'n-b', titleKey: 'Notice B', cta: { kind: 'nav', labelKey: 'Go to trips', href: '/trips' } });
     useSystemNoticeStore.setState({ notices: [noticeA, noticeB], loaded: true });
 
     const dismissSpy = vi.spyOn(useSystemNoticeStore.getState(), 'dismiss');
     render(<ModalRenderer notices={[noticeA, noticeB]} />);
 
+    await flushGraceDelay();
+
+    // Navigate to last page
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText('Go to notice 2'));
+    });
     await flushGraceDelay();
 
     const ctaBtn = screen.getByRole('button', { name: 'Go to trips' });
@@ -299,17 +306,22 @@ describe('ModalRenderer', () => {
     expect(screen.getByText('Notice A')).toBeTruthy();
     expect(screen.getByText('1 / 3')).toBeTruthy();
 
-    // Dismiss notice A — store shrinks, parent re-renders with [B, C]
+    // Navigate to last page where X button is available
     await act(async () => {
-      fireEvent.click(screen.getByLabelText('Dismiss'));
-      useSystemNoticeStore.setState({ notices: [noticeB, noticeC], loaded: true });
-      rerender(<ModalRenderer notices={[noticeB, noticeC]} />);
+      fireEvent.click(screen.getByLabelText('Go to notice 3'));
     });
     await flushGraceDelay();
 
-    // Must show B (idx=0), not C (idx=1 — the old buggy behavior)
-    expect(screen.getByText('Notice B')).toBeTruthy();
-    expect(screen.getByText('1 / 2')).toBeTruthy();
+    // Dismiss all from last page — store shrinks
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText('Dismiss'));
+      useSystemNoticeStore.setState({ notices: [], loaded: true });
+      rerender(<ModalRenderer notices={[]} />);
+    });
+    await flushGraceDelay();
+
+    // All dismissed — modal should be gone
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 
   it('FE-SN-MODAL-017: X button dismisses all notices, not just the current one', async () => {
@@ -321,6 +333,12 @@ describe('ModalRenderer', () => {
     render(<ModalRenderer notices={[noticeA, noticeB]} />);
     await flushGraceDelay();
 
+    // X button only appears on the last page — navigate there
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText('Go to notice 2'));
+    });
+    await flushGraceDelay();
+
     await act(async () => {
       fireEvent.click(screen.getByLabelText('Dismiss'));
     });
@@ -330,13 +348,19 @@ describe('ModalRenderer', () => {
     expect(dismissSpy).toHaveBeenCalledTimes(2);
   });
 
-  it('FE-SN-MODAL-018: ESC key dismisses all notices when current is dismissible', async () => {
+  it('FE-SN-MODAL-018: ESC key dismisses all notices when on last page', async () => {
     const noticeA = makeNotice({ id: 'n-a', titleKey: 'Notice A' });
     const noticeB = makeNotice({ id: 'n-b', titleKey: 'Notice B' });
     useSystemNoticeStore.setState({ notices: [noticeA, noticeB], loaded: true });
 
     const dismissSpy = vi.spyOn(useSystemNoticeStore.getState(), 'dismiss');
     render(<ModalRenderer notices={[noticeA, noticeB]} />);
+    await flushGraceDelay();
+
+    // ESC only works on last page — navigate there first
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText('Go to notice 2'));
+    });
     await flushGraceDelay();
 
     await act(async () => {

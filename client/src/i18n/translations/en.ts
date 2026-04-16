@@ -1958,6 +1958,7 @@ const en: Record<string, string | { name: string; category: string }[]> = {
   'journey.detail.noEntriesHint': 'Add a trip to get started with skeleton entries',
   'journey.detail.noPhotos': 'No photos yet',
   'journey.detail.noPhotosHint': 'Upload photos to entries or browse your Immich/Synology library',
+  'journey.detail.journeyTab': 'Journey',
   'journey.detail.journeyStats': 'Journey Stats',
   'journey.detail.syncedTrips': 'Synced Trips',
   'journey.detail.noTripsLinked': 'No trips linked yet',
@@ -2247,6 +2248,10 @@ const en: Record<string, string | { name: string; category: string }[]> = {
   'system_notice.v3_mcp.highlight_scopes':     '24 fine-grained permission scopes',
   'system_notice.v3_mcp.highlight_deprecated': 'Static trek_ tokens deprecated',
   'system_notice.v3_mcp.highlight_tools':      'Expanded toolset & prompts',
+
+  // System notices — personal thank you
+  'system_notice.v3_thankyou.title': 'A personal note from me',
+  'system_notice.v3_thankyou.body': 'Before you go — I want to take a moment.\n\nTREK started as a side project I built for my own trips. I never imagined it would grow into something that 4,000 of you now trust to plan your adventures. Every star, every issue, every feature request — I read them all, and they keep me going through late nights between a full-time job and university.\n\nI want you to know: TREK will always be open source, always self-hosted, always yours. No tracking, no subscriptions, no strings attached. Just a tool built by someone who loves traveling as much as you do.\n\nSpecial thanks to [jubnl](https://github.com/jubnl) — you have become an incredible collaborator. So much of what makes 3.0 great carries your fingerprints. Thank you for believing in this project when it was still rough around the edges.\n\nAnd to every single one of you who filed a bug, translated a string, shared TREK with a friend, or simply used it to plan a trip — **thank you**. You are the reason this exists.\n\nHere\'s to many more adventures together.\n\n— Maurice\n\n---\n\n[Join the community on Discord](https://discord.gg/7Q6M6jDwzf)\n\nIf TREK makes your travels better, a [small coffee](https://ko-fi.com/mauriceboe) always keeps the lights on.',
 
   // System notices — onboarding
   'system_notice.welcome_v1.title': 'Welcome to TREK',

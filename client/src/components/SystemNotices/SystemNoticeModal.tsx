@@ -63,6 +63,7 @@ interface ContentProps {
 
 function NoticeContent({ notice, title, body, ctaLabel, titleId, bodyId, isDark, onDismiss, onDismissAll, onCTA, total, currentPage, canPage, onPrev, onNext, onGoto }: ContentProps) {
   const { t } = useTranslation();
+  const isLastPage = total <= 1 || currentPage === total - 1;
 
   const DefaultIcon = SEVERITY_ICONS[notice.severity] ?? Info;
   const LucideIcon: React.ElementType = notice.icon
@@ -71,8 +72,8 @@ function NoticeContent({ notice, title, body, ctaLabel, titleId, bodyId, isDark,
 
   return (
     <div className="flex flex-col relative flex-1">
-      {/* Dismiss X button */}
-      {notice.dismissible && (
+      {/* Dismiss X button — only on last page so users read all notices */}
+      {notice.dismissible && isLastPage && (
         <button
           onClick={onDismissAll}
           className="absolute top-4 right-4 p-2 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
@@ -99,26 +100,44 @@ function NoticeContent({ notice, title, body, ctaLabel, titleId, bodyId, isDark,
         </div>
       )}
 
-      <div className="px-8 pt-8 pb-0 sm:pb-8 flex flex-col flex-1">
-        {/* Severity icon (when no hero) */}
-        {!notice.media && (
+      {/* Special warm header for Heart icon (thank-you notice) */}
+      {notice.icon === 'Heart' && !notice.media && (
+        <div className="relative overflow-hidden bg-gradient-to-br from-rose-500 via-pink-500 to-indigo-500 px-8 py-5 text-center">
+          <div className="absolute inset-0 opacity-10" style={{ backgroundImage: 'radial-gradient(circle at 20% 50%, white 1px, transparent 1px), radial-gradient(circle at 80% 20%, white 1px, transparent 1px), radial-gradient(circle at 60% 80%, white 1px, transparent 1px)', backgroundSize: '60px 60px, 80px 80px, 40px 40px' }} />
+          <div className="relative flex items-center justify-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center ring-2 ring-white/10">
+              <LucideIcon size={20} className="text-white" />
+            </div>
+            <div className="text-left">
+              <h2 id={titleId} className="text-lg font-bold text-white leading-tight">{title}</h2>
+              <p className="text-xs text-white/60 font-medium">TREK 3.0</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className={`${notice.icon === 'Heart' && !notice.media ? 'px-8 py-6' : 'p-8'} flex flex-col flex-1`}>
+        {/* Severity icon (when no hero and not Heart) */}
+        {!notice.media && notice.icon !== 'Heart' && (
           <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 ${SEVERITY_ACCENT[notice.severity] ?? ''}`}>
             <LucideIcon size={28} />
           </div>
         )}
 
-        {/* Title */}
-        <h2
-          id={titleId}
-          className="text-xl font-semibold text-center text-slate-900 dark:text-slate-100 mb-3"
-        >
-          {title}
-        </h2>
+        {/* Title (not for Heart — rendered in gradient header) */}
+        {(notice.icon !== 'Heart' || notice.media) && (
+          <h2
+            id={titleId}
+            className="text-xl font-semibold text-center text-slate-900 dark:text-slate-100 mb-3"
+          >
+            {title}
+          </h2>
+        )}
 
-        {/* Body — markdown */}
+        {/* Body — markdown (long body text uses left-aligned layout) */}
         <div
           id={bodyId}
-          className="text-sm leading-relaxed text-center text-slate-600 dark:text-slate-400 max-w-[340px] mx-auto mb-4"
+          className="text-sm leading-relaxed text-slate-600 dark:text-slate-400 mx-auto mb-4 text-center"
         >
           <React.Suspense fallback={<p className="text-sm text-slate-500">{body}</p>}>
             <ReactMarkdown
@@ -128,13 +147,29 @@ function NoticeContent({ notice, title, body, ctaLabel, titleId, bodyId, isDark,
                 a: ({ href, children }) => (
                   <a
                     href={href}
-                    className="text-blue-600 dark:text-blue-400 underline hover:no-underline"
+                    className="text-indigo-600 dark:text-indigo-400 underline decoration-indigo-300 dark:decoration-indigo-700 hover:decoration-indigo-500 dark:hover:decoration-indigo-400 underline-offset-2 transition-colors"
                     target="_blank"
                     rel="noopener noreferrer"
                   >
                     {children}
                   </a>
                 ),
+                p: ({ children }) => {
+                  // Signature line styling (e.g. "— Maurice")
+                  const text = typeof children === 'string' ? children : Array.isArray(children) ? children.find(c => typeof c === 'string') : '';
+                  if (typeof text === 'string' && text.trim().startsWith('—') && text.trim().length < 30) {
+                    return <p className="mt-4 mb-3 text-base font-semibold text-slate-800 dark:text-slate-200 italic">{children}</p>;
+                  }
+                  return <p className="mb-3 last:mb-0">{children}</p>;
+                },
+                hr: () => (
+                  <div className="my-5 flex items-center gap-3">
+                    <div className="flex-1 border-t border-slate-200 dark:border-slate-700" />
+                    <span className="text-slate-300 dark:text-slate-600 text-xs">♡</span>
+                    <div className="flex-1 border-t border-slate-200 dark:border-slate-700" />
+                  </div>
+                ),
+                strong: ({ children }) => <strong className="font-semibold text-slate-800 dark:text-slate-200">{children}</strong>,
                 ul: ({ children }) => <ul className="list-disc list-inside text-left">{children}</ul>,
                 ol: ({ children }) => <ol className="list-decimal list-inside text-left">{children}</ol>,
               }}
@@ -147,7 +182,7 @@ function NoticeContent({ notice, title, body, ctaLabel, titleId, bodyId, isDark,
         {/* Inline image */}
         {notice.media?.placement === 'inline' && (
           <div
-            className="w-full overflow-hidden rounded-lg mb-4 max-w-[340px] mx-auto"
+            className="w-full overflow-hidden rounded-lg mb-4 mx-auto"
             style={{ aspectRatio: notice.media.aspectRatio ?? '16/9' }}
           >
             <img
@@ -162,7 +197,7 @@ function NoticeContent({ notice, title, body, ctaLabel, titleId, bodyId, isDark,
 
         {/* Highlights */}
         {notice.highlights && notice.highlights.length > 0 && (
-          <ul className="max-w-[340px] mx-auto mb-4 space-y-2">
+          <ul className="mx-auto mb-4 space-y-2">
             {notice.highlights.map((h, i) => {
               const HIcon: React.ElementType | null = h.iconName
                 ? ((LucideIcons as Record<string, unknown>)[h.iconName] as React.ElementType) ?? null
@@ -179,33 +214,6 @@ function NoticeContent({ notice, title, body, ctaLabel, titleId, bodyId, isDark,
             })}
           </ul>
         )}
-
-        {/* CTA + dismiss link */}
-        <div className="flex flex-col items-center gap-3 mt-auto">
-          {ctaLabel ? (
-            <button
-              id={`notice-cta-${notice.id}`}
-              onClick={onCTA}
-              className="w-full h-11 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-medium transition-colors"
-            >
-              {ctaLabel}
-            </button>
-          ) : (
-            <button
-              id={`notice-cta-${notice.id}`}
-              onClick={onDismissAll}
-              className="w-full h-11 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-medium transition-colors"
-            >
-              {t('common.ok')}
-            </button>
-          )}
-          <button
-            onClick={notice.dismissible && ctaLabel ? onDismiss : undefined}
-            className={`text-sm text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors ${!(notice.dismissible && ctaLabel) ? 'invisible' : ''}`}
-          >
-            Not now
-          </button>
-        </div>
 
         {/* Pager — dots, arrows, counter (only when multiple notices) */}
         {total > 1 && (
@@ -252,6 +260,44 @@ function NoticeContent({ notice, title, body, ctaLabel, titleId, bodyId, isDark,
             </span>
           </div>
         )}
+
+        {/* CTA + dismiss link */}
+        <div className="flex flex-col items-center gap-3 mt-auto">
+          {!isLastPage && total > 1 ? (
+            /* Non-last page: "Next" button to advance through all notices */
+            <button
+              id={`notice-cta-${notice.id}`}
+              onClick={onNext}
+              className="w-full h-11 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-medium transition-colors flex items-center justify-center gap-2"
+            >
+              {t('system_notice.pager.next')} <ChevronRight size={16} />
+            </button>
+          ) : ctaLabel ? (
+            <button
+              id={`notice-cta-${notice.id}`}
+              onClick={onCTA}
+              className="w-full h-11 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-medium transition-colors"
+            >
+              {ctaLabel}
+            </button>
+          ) : (
+            <button
+              id={`notice-cta-${notice.id}`}
+              onClick={onDismissAll}
+              className="w-full h-11 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-medium transition-colors"
+            >
+              {t('common.ok')}
+            </button>
+          )}
+          {notice.dismissible && isLastPage && ctaLabel && (
+            <button
+              onClick={onDismiss}
+              className="text-sm text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors"
+            >
+              Not now
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -377,15 +423,16 @@ export function ModalRenderer({ notices }: Props) {
     };
   }, [notice?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ESC key — closes all modal notices (same as clicking X)
+  // ESC key — closes all modal notices (only on last page so users read all notices)
+  const isLastPage = notices.length <= 1 || idx === notices.length - 1;
   useEffect(() => {
-    if (!visible || !notice?.dismissible) return;
+    if (!visible || !notice?.dismissible || !isLastPage) return;
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') handleDismissAll();
     };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, [visible, notice?.dismissible]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [visible, notice?.dismissible, isLastPage]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Arrow-key pager navigation
   useEffect(() => {
@@ -740,7 +787,7 @@ export function ModalRenderer({ notices }: Props) {
   }
 
   // Desktop centered modal
-  const maxWidth = notice.severity === 'critical' ? 'max-w-[560px]' : 'max-w-[480px]';
+  const maxWidth = notice.severity === 'critical' ? 'max-w-[680px]' : 'max-w-[620px]';
   const desktopMotion = prefersReducedMotion
     ? (visible ? 'opacity-100' : 'opacity-0')
     : (visible ? 'opacity-100 scale-100' : 'opacity-0 scale-[0.97]');
@@ -749,7 +796,7 @@ export function ModalRenderer({ notices }: Props) {
     <div
       className={`fixed inset-0 z-50 bg-slate-950/40 backdrop-blur-[2px] transition-opacity ${dur} ${ease} ${visible ? 'opacity-100' : 'opacity-0'}`}
       role="presentation"
-      onClick={notice.dismissible ? handleDismiss : undefined}
+      onClick={notice.dismissible && isLastPage ? handleDismissAll : undefined}
     >
       {/* Screen-reader page announcements */}
       <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">{pageAnnouncement}</span>
@@ -759,7 +806,7 @@ export function ModalRenderer({ notices }: Props) {
           aria-modal="true"
           aria-labelledby={titleId}
           aria-describedby={bodyId}
-          className={`w-full ${maxWidth} rounded-2xl overflow-hidden shadow-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 transition-all ${dur} ${ease} ${desktopMotion}`}
+          className={`w-full ${maxWidth} rounded-2xl overflow-hidden overflow-y-auto max-h-[90vh] shadow-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 transition-all ${dur} ${ease} ${desktopMotion}`}
           onClick={e => e.stopPropagation()}
         >
           <div ref={contentWrapperRef}>
