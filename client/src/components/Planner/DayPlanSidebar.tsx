@@ -336,6 +336,10 @@ const DayPlanSidebar = React.memo(function DayPlanSidebar({
     return () => document.removeEventListener('dragend', cleanup)
   }, [])
 
+  // Initialize missing transport positions outside of render to avoid setState-during-render
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { days.forEach(day => initTransportPositions(day.id)) }, [days, reservations])
+
   const toggleDay = (dayId, e) => {
     e.stopPropagation()
     setExpandedDays(prev => {
@@ -489,11 +493,6 @@ const DayPlanSidebar = React.memo(function DayPlanSidebar({
     const da = getDayAssignments(dayId)
     const dn = (dayNotes[String(dayId)] || []).slice().sort((a, b) => a.sort_order - b.sort_order)
     const transport = getTransportForDay(dayId)
-
-    // Initialize positions for transports that don't have one yet
-    if (transport.some(r => r.day_plan_position == null)) {
-      initTransportPositions(dayId)
-    }
 
     // All places keep their order_index — untimed can be freely moved, timed auto-sort when time is set
     const baseItems = [
@@ -1117,7 +1116,7 @@ const DayPlanSidebar = React.memo(function DayPlanSidebar({
       </div>
 
       {/* Tagesliste */}
-      <div className="scroll-container trek-stagger" style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
+      <div className={`scroll-container${draggingId ? '' : ' trek-stagger'}`} style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
         {days.map((day, index) => {
           const isSelected = selectedDayId === day.id
           const isExpanded = expandedDays.has(day.id)
@@ -1135,7 +1134,7 @@ const DayPlanSidebar = React.memo(function DayPlanSidebar({
               {/* Tages-Header — akzeptiert Drops aus der PlacesSidebar */}
               <div
                 onClick={() => { onSelectDay(day.id); if (onDayDetail) onDayDetail(day) }}
-                onDragOver={e => { e.preventDefault(); setDragOverDayId(day.id) }}
+                onDragOver={e => { e.preventDefault(); if (dragOverDayId !== day.id) setDragOverDayId(day.id) }}
                 onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) setDragOverDayId(null) }}
                 onDrop={e => handleDropOnDay(e, day.id)}
                 style={{
@@ -1349,7 +1348,7 @@ const DayPlanSidebar = React.memo(function DayPlanSidebar({
                 >
                   {merged.length === 0 && !dayNoteUi ? (
                     <div
-                      onDragOver={e => { e.preventDefault(); setDragOverDayId(day.id) }}
+                      onDragOver={e => { e.preventDefault(); if (dragOverDayId !== day.id) setDragOverDayId(day.id) }}
                       onDrop={e => handleDropOnDay(e, day.id)}
                       style={{ padding: '16px', textAlign: 'center', borderRadius: 8,
                         background: dragOverDayId === day.id ? 'rgba(17,24,39,0.05)' : 'transparent',
@@ -1409,7 +1408,6 @@ const DayPlanSidebar = React.memo(function DayPlanSidebar({
 
                         return (
                           <React.Fragment key={`place-${assignment.id}`}>
-                            {showDropLine && <div style={{ height: 2, background: 'var(--text-primary)', borderRadius: 1, margin: '2px 8px' }} />}
                           <div
                             draggable={canEditDays}
                             onDragStart={e => {
@@ -1499,6 +1497,7 @@ const DayPlanSidebar = React.memo(function DayPlanSidebar({
                               borderLeft: lockedIds.has(assignment.id)
                                 ? '3px solid #dc2626'
                                 : '3px solid transparent',
+                              borderTop: showDropLine ? '2px solid var(--text-primary)' : undefined,
                               transition: 'background 0.15s, border-color 0.15s',
                               opacity: isDraggingThis ? 0.4 : 1,
                             }}
@@ -1722,7 +1721,6 @@ const DayPlanSidebar = React.memo(function DayPlanSidebar({
 
                         return (
                           <React.Fragment key={`transport-${res.id}-${day.id}`}>
-                          {showDropLine && <div style={{ height: 2, background: 'var(--text-primary)', borderRadius: 1, margin: '2px 8px' }} />}
                           <div
                             onClick={() => canEditDays && onEditTransport?.(res)}
                             onDragOver={e => {
@@ -1771,6 +1769,8 @@ const DayPlanSidebar = React.memo(function DayPlanSidebar({
                               margin: '1px 8px',
                               borderRadius: 6,
                               border: `1px solid ${color}33`,
+                              borderTop: showDropLine ? '2px solid var(--text-primary)' : undefined,
+                              borderBottom: showDropLineAfter ? '2px solid var(--text-primary)' : undefined,
                               background: `${color}08`,
                               cursor: canEditDays && onEditTransport ? 'pointer' : 'default', userSelect: 'none',
                               transition: 'background 0.1s',
@@ -1844,7 +1844,6 @@ const DayPlanSidebar = React.memo(function DayPlanSidebar({
                               )
                             })()}
                           </div>
-                          {showDropLineAfter && <div style={{ height: 2, background: 'var(--text-primary)', borderRadius: 1, margin: '2px 8px' }} />}
                           </React.Fragment>
                         )
                       }
@@ -1855,7 +1854,6 @@ const DayPlanSidebar = React.memo(function DayPlanSidebar({
                       const noteIdx = idx
                       return (
                         <React.Fragment key={`note-${note.id}`}>
-                          {showDropLine && <div style={{ height: 2, background: 'var(--text-primary)', borderRadius: 1, margin: '2px 8px' }} />}
                         <div
                           draggable={canEditDays}
                           onDragStart={e => { if (!canEditDays) { e.preventDefault(); return } e.dataTransfer.setData('noteId', String(note.id)); e.dataTransfer.setData('fromDayId', String(day.id)); e.dataTransfer.effectAllowed = 'move'; dragDataRef.current = { noteId: String(note.id), fromDayId: String(day.id) }; setDraggingId(`note-${note.id}`) }}
@@ -1911,6 +1909,7 @@ const DayPlanSidebar = React.memo(function DayPlanSidebar({
                             margin: '1px 8px',
                             borderRadius: 6,
                             border: '1px solid var(--border-faint)',
+                            borderTop: showDropLine ? '2px solid var(--text-primary)' : undefined,
                             background: 'var(--bg-hover)',
                             opacity: draggingId === `note-${note.id}` ? 0.4 : 1,
                             transition: 'background 0.1s', cursor: 'grab', userSelect: 'none',
