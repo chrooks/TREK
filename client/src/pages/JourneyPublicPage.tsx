@@ -216,6 +216,28 @@ export default function JourneyPublicPage() {
           </div>
         )}
 
+        {/* Floating view toggle — visible above the fullscreen map on mobile */}
+        {isMobile && view === 'timeline' && perms.share_timeline && perms.share_map && availableViews.length > 1 && (
+          <div className="fixed left-0 right-0 z-50 flex justify-center px-4" style={{ top: 'calc(env(safe-area-inset-top, 0px) + 12px)' }}>
+            <div className="flex bg-white/90 dark:bg-zinc-800/90 backdrop-blur-lg border border-zinc-200 dark:border-zinc-700 rounded-lg overflow-hidden shadow-lg">
+              {availableViews.map(v => (
+                <button
+                  key={v.id}
+                  onClick={() => setView(v.id)}
+                  className={`flex items-center gap-1.5 px-3 py-[7px] text-[12px] font-medium ${
+                    view === v.id
+                      ? 'bg-zinc-900 dark:bg-white text-white dark:text-zinc-900'
+                      : 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300'
+                  }`}
+                >
+                  <v.icon size={13} />
+                  {v.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Mobile combined map+timeline (public, read-only) */}
         {isMobile && view === 'timeline' && perms.share_timeline && perms.share_map && (
           <MobileMapTimeline
@@ -225,6 +247,7 @@ export default function JourneyPublicPage() {
             readOnly
             onEntryClick={() => {}}
             publicPhotoUrl={(photoId) => `/api/public/journey/${token}/photos/${photoId}/original`}
+            carouselBottom="calc(env(safe-area-inset-bottom, 16px) + 8px)"
           />
         )}
 

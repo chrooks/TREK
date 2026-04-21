@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react'
+import { formatLocationName } from '../utils/formatters'
 import { createPortal } from 'react-dom'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useJourneyStore } from '../store/journeyStore'
@@ -8,6 +9,7 @@ import { journeyApi, authApi, addonsApi, mapsApi } from '../api/client'
 import { addListener, removeListener } from '../api/websocket'
 import Navbar from '../components/Layout/Navbar'
 import JourneyMap from '../components/Journey/JourneyMapAuto'
+import { DAY_COLORS } from '../components/Journey/dayColors'
 import type { JourneyMapAutoHandle as JourneyMapHandle } from '../components/Journey/JourneyMapAuto'
 import JournalBody from '../components/Journey/JournalBody'
 import MarkdownToolbar from '../components/Journey/MarkdownToolbar'
@@ -279,16 +281,28 @@ export default function JourneyDetailPage() {
     [current?.entries]
   )
 
-  const sidebarMapItems = useMemo(() => mapEntries.map(e => ({
-    id: String(e.id),
-    lat: e.location_lat!,
-    lng: e.location_lng!,
-    title: e.title || '',
-    location_name: e.location_name || '',
-    mood: e.mood,
-    created_at: e.entry_date,
-    entry_date: e.entry_date,
-  })), [mapEntries])
+  const sidebarMapItems = useMemo(() => {
+    const sorted = [...mapEntries].sort((a, b) => a.entry_date.localeCompare(b.entry_date))
+    const uniqueDates = [...new Set(sorted.map(e => e.entry_date))]
+    const dayCounters = new Map<string, number>()
+    return sorted.map(e => {
+      const dayIdx = uniqueDates.indexOf(e.entry_date)
+      const dayLabel = (dayCounters.get(e.entry_date) ?? 0) + 1
+      dayCounters.set(e.entry_date, dayLabel)
+      return {
+        id: String(e.id),
+        lat: e.location_lat!,
+        lng: e.location_lng!,
+        title: e.title || '',
+        location_name: e.location_name || '',
+        mood: e.mood,
+        created_at: e.entry_date,
+        entry_date: e.entry_date,
+        dayColor: DAY_COLORS[dayIdx % DAY_COLORS.length],
+        dayLabel,
+      }
+    })
+  }, [mapEntries])
 
   const tripDates = useMemo(() => {
     const dates = new Set<string>()
@@ -424,7 +438,7 @@ export default function JourneyDetailPage() {
               ? 'max-w-[1440px] mx-auto px-0 pt-0'
               : 'flex w-full overflow-hidden'
           }
-          style={!isMobile ? { height: 'calc(100vh - var(--nav-h, 56px))' } : undefined}
+          style={!isMobile ? { height: 'calc(100dvh - var(--nav-h, 56px))' } : undefined}
         >
           {/* LEFT column (full width on mobile, scrollable feed on desktop) */}
           <div
@@ -484,7 +498,7 @@ export default function JourneyDetailPage() {
                       >
                         {hideSkeletons ? <EyeOff size={14} /> : <Eye size={14} />}
                       </button>
-                      <span className="absolute top-full mt-2 left-1/2 -translate-x-1/2 px-2 py-1 rounded-md bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 text-[11px] font-medium whitespace-nowrap opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity">
+                      <span className="absolute top-full mt-2 right-0 px-2 py-1 rounded-md bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 text-[11px] font-medium whitespace-nowrap opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity">
                         {hideSkeletons ? t('journey.skeletons.show') : t('journey.skeletons.hide')}
                       </span>
                     </div>
@@ -584,7 +598,7 @@ export default function JourneyDetailPage() {
                       <div key={date} className="flex flex-col gap-3 trek-stagger">
                         <div className="bg-white/95 dark:bg-zinc-900/95 backdrop-blur border-y md:border border-zinc-200 dark:border-zinc-700 rounded-none md:rounded-xl -mx-4 md:mx-0 px-4 py-3.5 flex items-center justify-between">
                           <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 rounded-lg bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 flex items-center justify-center text-[13px] font-bold">
+                            <div className="w-8 h-8 rounded-lg flex items-center justify-center text-[13px] font-bold text-white" style={{ background: DAY_COLORS[dayIdx % DAY_COLORS.length] }}>
                               {dayIdx + 1}
                             </div>
                             <div>
@@ -613,7 +627,7 @@ export default function JourneyDetailPage() {
                               .catch(() => toast.error(t('common.errorOccurred')))
                           }
                           return (
-                            <div key={entry.id} data-entry-id={String(entry.id)} className={`relative ${canReorder ? 'flex items-stretch gap-2' : ''}`}>
+                            <div key={entry.id} data-entry-id={String(entry.id)} className={`relative ${canReorder ? 'flex items-stretch gap-2' : ''}`} onMouseEnter={() => { setActiveEntryId(String(entry.id)); mapRef.current?.highlightMarker(String(entry.id)) }} style={String(entry.id) === activeEntryId ? { outline: `2px solid ${DAY_COLORS[dayIdx % DAY_COLORS.length]}`, outlineOffset: '3px', borderRadius: '12px' } : undefined}>
                               {canReorder && (
                                 <div className="flex flex-col gap-1 justify-center flex-shrink-0 py-1">
                                   <button
@@ -735,7 +749,8 @@ export default function JourneyDetailPage() {
           journey={current}
           onClose={() => setShowSettings(false)}
           onSaved={() => { setShowSettings(false); loadJourney(Number(id)) }}
-          onOpenInvite={() => { setShowSettings(false); setShowInvite(true) }}
+          onOpenInvite={() => { setShowInvite(true) }}
+          onRefresh={() => loadJourney(Number(id))}
         />
       )}
 
@@ -917,7 +932,7 @@ function MapView({ entries, mapEntries, sortedDates, activeLocationId, fullMapRe
                             <span className="text-[14px] font-semibold text-zinc-900 dark:text-white truncate">{e.title || e.location_name}</span>
                           </div>
                           <div className="text-[11px] text-zinc-500 truncate">
-                            {e.location_name}{e.entry_time ? ` · ${e.entry_time}` : ''}
+                            {formatLocationName(e.location_name)}{e.entry_time ? ` · ${e.entry_time}` : ''}
                           </div>
                         </div>
 
@@ -1360,7 +1375,7 @@ function EntryCard({ entry, readOnly, onEdit, onDelete, onPhotoClick }: {
             {entry.location_name && (
               <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-black/40 backdrop-blur-sm rounded-full text-[10px] font-semibold text-white tracking-wide max-w-full overflow-hidden">
                 <MapPin size={10} className="flex-shrink-0" />
-                <span className="truncate">{entry.location_name}</span>
+                <span className="truncate">{formatLocationName(entry.location_name)}</span>
               </span>
             )}
             {entry.entry_time && (
@@ -1403,7 +1418,7 @@ function EntryCard({ entry, readOnly, onEdit, onDelete, onPhotoClick }: {
           <div className="flex items-center gap-2 min-w-0 flex-1 mr-2">
             {entry.location_name && (
               <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-zinc-100 dark:bg-zinc-800 rounded-full text-[10px] font-semibold text-zinc-500 max-w-full overflow-hidden">
-                <MapPin size={10} className="flex-shrink-0" /> <span className="truncate">{entry.location_name}</span>
+                <MapPin size={10} className="flex-shrink-0" /> <span className="truncate">{formatLocationName(entry.location_name)}</span>
               </span>
             )}
             {entry.entry_time && (
@@ -1482,7 +1497,7 @@ function SkeletonCard({ entry, onClick }: { entry: JourneyEntry; onClick?: () =>
           {entry.title || t('journey.detail.newEntry')}
         </div>
         <div className="text-[11px] text-zinc-500 mt-0.5">
-          {entry.location_name || ''}{entry.entry_time ? ` · ${entry.entry_time}` : ''}
+          {formatLocationName(entry.location_name)}{entry.entry_time ? ` · ${entry.entry_time}` : ''}
         </div>
       </div>
       <div className="text-[11px] text-zinc-500 font-medium flex-shrink-0">
@@ -2962,11 +2977,12 @@ function JourneyShareSection({ journeyId }: { journeyId: number }) {
   )
 }
 
-function JourneySettingsDialog({ journey, onClose, onSaved, onOpenInvite }: {
+function JourneySettingsDialog({ journey, onClose, onSaved, onOpenInvite, onRefresh }: {
   journey: JourneyDetail
   onClose: () => void
   onSaved: () => void
   onOpenInvite: () => void
+  onRefresh: () => void
 }) {
   const { t } = useTranslation()
   const [title, setTitle] = useState(journey.title)
@@ -3133,7 +3149,7 @@ function JourneySettingsDialog({ journey, onClose, onSaved, onOpenInvite }: {
                         try {
                           await journeyApi.removeContributor(journey.id, c.user_id)
                           toast.success(t('journey.contributors.removed'))
-                          onSaved()
+                          onRefresh()
                         } catch {
                           toast.error(t('journey.contributors.removeFailed'))
                         }

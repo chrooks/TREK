@@ -18,6 +18,8 @@ interface MapEntry {
   location_name?: string | null
   mood?: string | null
   entry_date: string
+  dayColor?: string
+  dayLabel?: number
 }
 
 interface Props {
@@ -39,6 +41,8 @@ interface Item {
   label: string
   locationName: string
   time: string
+  dayColor: string
+  dayLabel: number
 }
 
 const MARKER_W = 28
@@ -55,6 +59,8 @@ function buildItems(entries: MapEntry[]): Item[] {
         label: e.title || '',
         locationName: e.location_name || '',
         time: e.entry_date,
+        dayColor: e.dayColor || '#52525B',
+        dayLabel: e.dayLabel ?? 1,
       })
     }
   }
@@ -157,21 +163,15 @@ function ensureJourneyPopupStyle() {
   document.head.appendChild(s)
 }
 
-function markerHtml(index: number, highlighted: boolean, dark: boolean): HTMLDivElement {
-  const fill = dark
-    ? (highlighted ? '#FAFAFA' : '#A1A1AA')
-    : (highlighted ? '#18181B' : '#52525B')
-  const textColor = highlighted ? (dark ? '#18181B' : '#fff') : '#fff'
-  const stroke = highlighted
-    ? (dark ? '#fff' : '#18181B')
-    : (dark ? '#3F3F46' : '#fff')
+function markerHtml(dayColor: string, dayLabel: number, highlighted: boolean): HTMLDivElement {
+  const fill = dayColor
+  const textColor = '#fff'
+  const stroke = highlighted ? '#fff' : 'rgba(255,255,255,0.5)'
   const shadow = highlighted
-    ? (dark
-        ? 'drop-shadow(0 0 10px rgba(255,255,255,0.35)) drop-shadow(0 2px 6px rgba(0,0,0,0.4))'
-        : 'drop-shadow(0 0 10px rgba(0,0,0,0.3)) drop-shadow(0 2px 6px rgba(0,0,0,0.3))')
+    ? 'drop-shadow(0 0 10px rgba(0,0,0,0.4)) drop-shadow(0 2px 6px rgba(0,0,0,0.4))'
     : 'drop-shadow(0 2px 4px rgba(0,0,0,0.25))'
   const scale = highlighted ? 1.2 : 1
-  const label = String(index + 1)
+  const label = String(dayLabel)
 
   // Outer wrap holds the element mapbox positions via `transform: translate(...)`.
   // Anything animated (scale, filter) has to live on an inner child — otherwise
@@ -183,7 +183,7 @@ function markerHtml(index: number, highlighted: boolean, dark: boolean): HTMLDiv
   inner.className = 'trek-journey-marker-inner'
   inner.style.cssText = `width:100%;height:100%;transform:scale(${scale});transform-origin:bottom center;transition:transform 0.2s ease;filter:${shadow};`
   inner.innerHTML = `<svg width="${MARKER_W}" height="${MARKER_H}" viewBox="0 0 28 36" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path d="M14 34C14 34 26 22.36 26 13C26 6.37 20.63 1 14 1C7.37 1 2 6.37 2 13C2 22.36 14 34 14 34Z" fill="${fill}" stroke="${stroke}" stroke-width="2"/>
+    <path d="M14 34C14 34 26 22.36 26 13C26 6.37 20.63 1 14 1C7.37 1 2 6.37 2 13C2 22.36 14 34 14 34Z" fill="${fill}" stroke="${stroke}" stroke-width="1.5"/>
     <circle cx="14" cy="13" r="8" fill="${fill}"/>
     <text x="14" y="13" text-anchor="middle" dominant-baseline="central" fill="${textColor}" font-family="-apple-system,system-ui,sans-serif" font-size="11" font-weight="700">${label}</text>
   </svg>`
@@ -273,13 +273,12 @@ const JourneyMapGL = forwardRef<JourneyMapGLHandle, Props>(function JourneyMapGL
     const item = itemsRef.current.find(i => i.id === id)
     const marker = markersRef.current.get(id)
     if (!item || !marker) return
-    const idx = itemsRef.current.indexOf(item)
     const el = marker.getElement()
     const currentInner = el.querySelector('.trek-journey-marker-inner') as HTMLDivElement | null
     if (!currentInner) return
     // Only swap the inner element's styles/HTML. Touching `el.style.cssText`
     // would wipe mapbox's positional transform and make the marker flicker.
-    const next = markerHtml(idx, highlighted, !!darkRef.current)
+    const next = markerHtml(item.dayColor, item.dayLabel, highlighted)
     const nextInner = next.querySelector('.trek-journey-marker-inner') as HTMLDivElement
     currentInner.style.cssText = nextInner.style.cssText
     currentInner.innerHTML = nextInner.innerHTML
@@ -382,8 +381,8 @@ const JourneyMapGL = forwardRef<JourneyMapGLHandle, Props>(function JourneyMapGL
       }
 
       // markers
-      items.forEach((item, i) => {
-        const el = markerHtml(i, false, !!darkRef.current)
+      items.forEach((item) => {
+        const el = markerHtml(item.dayColor, item.dayLabel, false)
         const marker = new mapboxgl.Marker({ element: el, anchor: 'bottom' })
           .setLngLat([item.lng, item.lat])
           .addTo(map)

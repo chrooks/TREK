@@ -1,4 +1,5 @@
 import { MapPin, Camera, Smile, Laugh, Meh, Frown, Sun, CloudSun, Cloud, CloudRain, CloudLightning, Snowflake } from 'lucide-react'
+import { formatLocationName } from '../../utils/formatters'
 import type { JourneyEntry, JourneyPhoto } from '../../store/journeyStore'
 
 const MOOD_ICONS: Record<string, typeof Smile> = {
@@ -37,13 +38,14 @@ function stripMarkdown(text: string): string {
 
 interface Props {
   entry: JourneyEntry | { id: number; type: string; title?: string | null; location_name?: string | null; location_lat?: number | null; location_lng?: number | null; entry_date: string; entry_time?: string | null; mood?: string | null; weather?: string | null; photos?: { photo_id: number }[]; story?: string | null }
-  index: number
+  dayLabel: number
+  dayColor: string
   isActive: boolean
   onClick: () => void
   publicPhotoUrl?: (photoId: number) => string
 }
 
-export default function MobileEntryCard({ entry, index, isActive, onClick, publicPhotoUrl }: Props) {
+export default function MobileEntryCard({ entry, dayLabel, dayColor, isActive, onClick, publicPhotoUrl }: Props) {
   const hasLocation = !!(entry.location_lat && entry.location_lng)
   const hasPhotos = entry.photos && entry.photos.length > 0
   const firstPhoto = hasPhotos ? entry.photos![0] : null
@@ -98,8 +100,8 @@ export default function MobileEntryCard({ entry, index, isActive, onClick, publi
         <div className="flex-1 p-3 flex flex-col min-w-0">
           {/* Day number + date + mood/weather */}
           <div className="flex items-center gap-1.5 mb-1">
-            <span className="w-5 h-5 rounded bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 text-[10px] font-bold flex items-center justify-center flex-shrink-0">
-              {index + 1}
+            <span className="w-5 h-5 rounded text-white text-[10px] font-bold flex items-center justify-center flex-shrink-0" style={{ background: dayColor }}>
+              {dayLabel}
             </span>
             <span className="text-[11px] text-zinc-400 font-medium">{dateStr}</span>
             {entry.entry_time && (
@@ -141,7 +143,7 @@ export default function MobileEntryCard({ entry, index, isActive, onClick, publi
             {hasLocation ? (
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-700 text-[10px] font-medium text-zinc-600 dark:text-zinc-300 max-w-full overflow-hidden">
                 <MapPin size={10} className="flex-shrink-0" />
-                <span className="truncate">{entry.location_name || 'On the map'}</span>
+                <span className="truncate">{formatLocationName(entry.location_name) || 'On the map'}</span>
               </span>
             ) : (
               <span className="text-[10px] text-zinc-400 italic">No location</span>

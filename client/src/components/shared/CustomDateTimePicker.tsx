@@ -119,13 +119,14 @@ export function CustomDatePicker({ value, onChange, placeholder, style = {}, com
           ...(() => {
             const r = ref.current?.getBoundingClientRect()
             if (!r) return { top: 0, left: 0 }
-            const w = 268, pad = 8
+            const w = 268, pad = 8, h = 360
             const vw = window.innerWidth
-            const vh = window.innerHeight
+            const vh = window.visualViewport?.height ?? window.innerHeight
             let left = r.left
             let top = r.bottom + 4
             if (left + w > vw - pad) left = Math.max(pad, vw - w - pad)
-            if (top + 320 > vh) top = Math.max(pad, r.top - 320)
+            if (top + h > vh - pad) top = r.top - h - 4
+            top = Math.max(pad, Math.min(top, vh - h - pad))
             if (vw < 360) left = Math.max(pad, (vw - w) / 2)
             return { top, left }
           })(),

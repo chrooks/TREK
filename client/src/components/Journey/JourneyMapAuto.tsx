@@ -14,6 +14,8 @@ interface MapEntry {
   location_name?: string | null
   mood?: string | null
   entry_date: string
+  dayColor?: string
+  dayLabel?: number
 }
 
 interface Props {

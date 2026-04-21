@@ -1,9 +1,10 @@
-import { useRef, useState, useEffect, useCallback } from 'react'
+import { useRef, useState, useEffect, useCallback, useMemo } from 'react'
 import { Plus } from 'lucide-react'
 import JourneyMap from './JourneyMap'
 import MobileEntryCard from './MobileEntryCard'
 import type { JourneyMapHandle } from './JourneyMap'
 import type { JourneyEntry } from '../../store/journeyStore'
+import { DAY_COLORS } from './dayColors'
 
 interface MapEntry {
   id: string
@@ -23,6 +24,7 @@ interface Props {
   onEntryClick: (entry: any) => void
   onAddEntry?: () => void
   publicPhotoUrl?: (photoId: number) => string
+  carouselBottom?: string
 }
 
 export default function MobileMapTimeline({
@@ -34,10 +36,22 @@ export default function MobileMapTimeline({
   onEntryClick,
   onAddEntry,
   publicPhotoUrl,
+  carouselBottom = 'calc(var(--bottom-nav-h, 84px) + 8px)',
 }: Props) {
   const mapRef = useRef<JourneyMapHandle>(null)
   const carouselRef = useRef<HTMLDivElement>(null)
   const [activeIndex, setActiveIndex] = useState(0)
+
+  const entryDayMeta = useMemo(() => {
+    const uniqueDates = [...new Set(entries.map((e: any) => e.entry_date).sort())]
+    const counters = new Map<string, number>()
+    return entries.map((e: any) => {
+      const dayIdx = uniqueDates.indexOf(e.entry_date)
+      const dayLabel = (counters.get(e.entry_date) ?? 0) + 1
+      counters.set(e.entry_date, dayLabel)
+      return { dayLabel, dayColor: DAY_COLORS[dayIdx % DAY_COLORS.length] }
+    })
+  }, [entries])
   const cardRefs = useRef<Map<number, HTMLDivElement>>(new Map())
   const activeIndexRef = useRef(activeIndex)
   useEffect(() => { activeIndexRef.current = activeIndex }, [activeIndex])
@@ -142,7 +156,10 @@ export default function MobileMapTimeline({
 
   if (entries.length === 0) {
     return (
-      <div className="fixed inset-0 z-10" style={{ top: 0, bottom: 0 }}>
+      <div
+        className="fixed left-0 right-0 z-10"
+        style={{ top: 'var(--nav-h, 0px)', bottom: 'env(safe-area-inset-bottom, 0px)' }}
+      >
         <JourneyMap
           ref={mapRef}
           entries={mapEntries}
@@ -168,7 +185,10 @@ export default function MobileMapTimeline({
   }
 
   return (
-    <div className="fixed inset-0 z-10" style={{ top: 0, bottom: 0 }}>
+    <div
+      className="fixed left-0 right-0 z-10"
+      style={{ top: 'var(--nav-h, 0px)', bottom: 'env(safe-area-inset-bottom, 0px)' }}
+    >
       {/* Full-screen map */}
       <JourneyMap
         ref={mapRef}
@@ -186,7 +206,7 @@ export default function MobileMapTimeline({
       {/* Bottom carousel */}
       <div
         className="fixed left-0 right-0 z-40"
-        style={{ touchAction: 'pan-x', bottom: 'calc(var(--bottom-nav-h, 84px) + 8px)' }}
+        style={{ touchAction: 'pan-x', bottom: carouselBottom }}
       >
         <div
           ref={carouselRef}
@@ -207,7 +227,8 @@ export default function MobileMapTimeline({
             >
               <MobileEntryCard
                 entry={entry}
-                index={i}
+                dayLabel={entryDayMeta[i]?.dayLabel ?? i + 1}
+                dayColor={entryDayMeta[i]?.dayColor ?? DAY_COLORS[0]}
                 isActive={i === activeIndex}
                 onClick={() => handleCardTap(entry, i)}
                 publicPhotoUrl={publicPhotoUrl}

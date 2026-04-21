@@ -1,5 +1,38 @@
 import type { AssignmentsMap } from '../types'
 
+// Collapses verbose Nominatim display_name strings (e.g. "Place, 1, Road, Neighbourhood,
+// City, County, State, Country, Postcode, Country") into "Place, Postcode, Country".
+// Clean short names (≤3 parts) pass through untouched.
+export function formatLocationName(raw: string | null | undefined): string {
+  if (!raw) return ''
+  const parts = raw.split(',').map(p => p.trim()).filter(Boolean)
+  if (parts.length <= 3) return raw.trim()
+
+  // Dedup preserving insertion order
+  const seen = new Set<string>()
+  const unique: string[] = []
+  for (const p of parts) {
+    if (!seen.has(p.toLowerCase())) { seen.add(p.toLowerCase()); unique.push(p) }
+  }
+  if (unique.length <= 3) return unique.join(', ')
+
+  const name = unique[0]
+  const last = unique[unique.length - 1]
+  const secondLast = unique.length >= 2 ? unique[unique.length - 2] : null
+
+  // Detect postcode at tail: short alphanumeric with at least one digit, ≤10 chars
+  const postalRe = /^[A-Z0-9][A-Z0-9\s\-]{1,8}$/i
+  const isLastPostal = postalRe.test(last) && /\d/.test(last) && last.length <= 10
+  const postcode = isLastPostal ? last : null
+  const country = isLastPostal ? secondLast : last
+
+  const result: string[] = [name]
+  if (postcode && postcode !== name) result.push(postcode)
+  if (country && country !== name && country !== postcode) result.push(country)
+
+  return result.join(', ')
+}
+
 const ZERO_DECIMAL_CURRENCIES = new Set(['JPY', 'KRW', 'VND', 'CLP', 'ISK', 'HUF'])
 
 export function currencyDecimals(currency: string): number {

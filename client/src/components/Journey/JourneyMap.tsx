@@ -9,6 +9,8 @@ export interface MapMarkerItem {
   label: string
   mood?: string | null
   time: string
+  dayColor: string
+  dayLabel: number
 }
 
 export interface JourneyMapHandle {
@@ -24,6 +26,8 @@ interface MapEntry {
   title?: string | null
   mood?: string | null
   entry_date: string
+  dayColor?: string
+  dayLabel?: number
 }
 
 interface Props {
@@ -49,6 +53,8 @@ function buildMarkerItems(entries: MapEntry[]): MapMarkerItem[] {
         label: e.title || 'Entry',
         mood: e.mood,
         time: e.entry_date,
+        dayColor: e.dayColor || '#52525B',
+        dayLabel: e.dayLabel ?? 1,
       })
     }
   }
@@ -59,30 +65,19 @@ function buildMarkerItems(entries: MapEntry[]): MapMarkerItem[] {
 const MARKER_W = 28
 const MARKER_H = 36
 
-function markerSvg(index: number, highlighted: boolean, dark: boolean): string {
-  // Highlighted: inverted colors for contrast (black on light, white on dark)
-  const fill = dark
-    ? (highlighted ? '#FAFAFA' : '#A1A1AA')
-    : (highlighted ? '#18181B' : '#52525B')
-  const textColor = dark
-    ? (highlighted ? '#18181B' : '#18181B')
-    : (highlighted ? '#fff' : '#fff')
-  const stroke = highlighted
-    ? (dark ? '#fff' : '#18181B')
-    : (dark ? '#3F3F46' : '#fff')
+function markerSvg(dayColor: string, dayLabel: number, highlighted: boolean): string {
+  const stroke = highlighted ? '#fff' : 'rgba(255,255,255,0.5)'
   const shadow = highlighted
-    ? (dark
-        ? 'filter:drop-shadow(0 0 10px rgba(255,255,255,0.35)) drop-shadow(0 2px 6px rgba(0,0,0,0.4))'
-        : 'filter:drop-shadow(0 0 10px rgba(0,0,0,0.3)) drop-shadow(0 2px 6px rgba(0,0,0,0.3))')
+    ? 'filter:drop-shadow(0 0 10px rgba(0,0,0,0.4)) drop-shadow(0 2px 6px rgba(0,0,0,0.4))'
     : 'filter:drop-shadow(0 2px 4px rgba(0,0,0,0.25))'
-  const label = String(index + 1)
+  const label = String(dayLabel)
   const scale = highlighted ? 1.2 : 1
 
   return `<div style="transform:scale(${scale});transition:transform 0.2s ease;${shadow};transform-origin:bottom center">
     <svg width="${MARKER_W}" height="${MARKER_H}" viewBox="0 0 28 36" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <path d="M14 34C14 34 26 22.36 26 13C26 6.37 20.63 1 14 1C7.37 1 2 6.37 2 13C2 22.36 14 34 14 34Z" fill="${fill}" stroke="${stroke}" stroke-width="2"/>
-      <circle cx="14" cy="13" r="8" fill="${fill}"/>
-      <text x="14" y="13" text-anchor="middle" dominant-baseline="central" fill="${textColor}" font-family="-apple-system,system-ui,sans-serif" font-size="11" font-weight="700">${label}</text>
+      <path d="M14 34C14 34 26 22.36 26 13C26 6.37 20.63 1 14 1C7.37 1 2 6.37 2 13C2 22.36 14 34 14 34Z" fill="${dayColor}" stroke="${stroke}" stroke-width="1.5"/>
+      <circle cx="14" cy="13" r="8" fill="${dayColor}"/>
+      <text x="14" y="13" text-anchor="middle" dominant-baseline="central" fill="#fff" font-family="-apple-system,system-ui,sans-serif" font-size="11" font-weight="700">${label}</text>
     </svg>
   </div>`
 }
@@ -115,12 +110,11 @@ const JourneyMap = forwardRef<JourneyMapHandle, Props>(function JourneyMap(
       const marker = markersRef.current.get(prev)
       const item = itemsRef.current.find(i => i.id === prev)
       if (marker && item) {
-        const idx = itemsRef.current.indexOf(item)
         marker.setIcon(L.divIcon({
           className: '',
           iconSize: [MARKER_W, MARKER_H],
           iconAnchor: [MARKER_W / 2, MARKER_H],
-          html: markerSvg(idx, false, isDark),
+          html: markerSvg(item.dayColor, item.dayLabel, false),
         }))
         marker.setZIndexOffset(0)
       }
@@ -130,12 +124,11 @@ const JourneyMap = forwardRef<JourneyMapHandle, Props>(function JourneyMap(
       const marker = markersRef.current.get(id)
       const item = itemsRef.current.find(i => i.id === id)
       if (marker && item) {
-        const idx = itemsRef.current.indexOf(item)
         marker.setIcon(L.divIcon({
           className: '',
           iconSize: [MARKER_W, MARKER_H],
           iconAnchor: [MARKER_W / 2, MARKER_H],
-          html: markerSvg(idx, true, isDark),
+          html: markerSvg(item.dayColor, item.dayLabel, true),
         }))
         marker.setZIndexOffset(1000)
       }
@@ -226,7 +219,7 @@ const JourneyMap = forwardRef<JourneyMapHandle, Props>(function JourneyMap(
         className: '',
         iconSize: [MARKER_W, MARKER_H],
         iconAnchor: [MARKER_W / 2, MARKER_H],
-        html: markerSvg(i, false, !!dark),
+        html: markerSvg(item.dayColor, item.dayLabel, false),
       })
 
       const marker = L.marker(pos, { icon }).addTo(map)

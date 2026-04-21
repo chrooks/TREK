@@ -6,6 +6,7 @@ import {
   ThumbsUp, ThumbsDown, ChevronDown,
 } from 'lucide-react'
 import JournalBody from './JournalBody'
+import { formatLocationName } from '../../utils/formatters'
 import type { JourneyEntry, JourneyPhoto } from '../../store/journeyStore'
 
 const MOOD_CONFIG: Record<string, { icon: typeof Smile; label: string; bg: string; text: string }> = {
@@ -130,7 +131,7 @@ export default function MobileEntryView({ entry, readOnly, onClose, onEdit, onDe
             <div className="mb-3">
               <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-zinc-100 dark:bg-zinc-800 text-[12px] font-medium text-zinc-700 dark:text-zinc-300">
                 <MapPin size={12} className="text-zinc-500 dark:text-zinc-400 flex-shrink-0" />
-                {entry.location_name}
+                {formatLocationName(entry.location_name)}
               </span>
             </div>
           )}
