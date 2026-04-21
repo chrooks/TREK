@@ -51,23 +51,7 @@ Include:
 
 ## Development Setup
 
-```bash
-git clone https://github.com/mauriceboe/TREK.git
-cd TREK
-
-# Server
-cd server
-npm install
-npm run dev
-
-# Client (separate terminal)
-cd client
-npm install
-npm run dev
-```
-
-- Server runs on `http://localhost:3001`
-- Client runs on `http://localhost:5173` (with proxy to server)
+See the [[Development Environment|Development-environment]] page for the full setup guide, including forking, remote configuration, branch conventions, and available scripts.
 
 ## Tech Stack
 

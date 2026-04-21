@@ -1,6 +1,6 @@
 # Developer Setup Guide
 
-> Before anything else, please read the [Contributing Guidelines](https://github.com/mauriceboe/TREK/blob/main/CONTRIBUTING.md).
+> Before anything else, please read the [[Contributing]] guidelines.
 
 ## Prerequisites
 
@@ -135,4 +135,4 @@ Then open a Pull Request from your fork to `mauriceboe/TREK` targeting the `dev`
 
 - Always branch off from an up-to-date `dev` — run `git fetch upstream && git rebase upstream/dev` before starting new work.
 - Run tests before pushing: `npm run test` in both `client/` and `server/`.
-- Follow the commit message conventions described in the [Contributing Guidelines](https://github.com/mauriceboe/TREK/blob/main/CONTRIBUTING.md).
+- Follow the commit message conventions described in the [[Contributing]] guidelines.

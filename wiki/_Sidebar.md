@@ -92,3 +92,7 @@
 ## Help
 - [[FAQ]]
 - [[Troubleshooting]]
+
+## Contributing
+- [[Contributing]]
+- [[Development Environment|Development-environment]]
