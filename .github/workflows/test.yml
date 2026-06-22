@@ -127,9 +127,10 @@ jobs:
 
       - name: Run tests
         env:
-          # Vitest + v8 coverage across 150+ files exceeds Node's default ~4 GB
-          # heap and OOM'd; give it headroom on the 16 GB runner.
-          NODE_OPTIONS: --max-old-space-size=6144
+          # Vitest's main process accumulates v8 coverage + verbose results across
+          # 150+ files; the peak exceeds Node's default ~4 GB heap (and 6 GB), so
+          # give it generous headroom on the 16 GB runner.
+          NODE_OPTIONS: --max-old-space-size=12288
         run: cd client && npm run test:coverage
 
       - name: Upload coverage
