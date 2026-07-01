@@ -37,7 +37,7 @@ vi.mock('../../../src/websocket', () => ({ broadcast: broadcastMock }));
 import { createTables } from '../../../src/db/schema';
 import { runMigrations } from '../../../src/db/migrations';
 import { resetTestDb } from '../../helpers/test-db';
-import { createUser, createTrip, createBudgetItem } from '../../helpers/factories';
+import { createUser, createTrip, createBudgetItem, addTripMember } from '../../helpers/factories';
 import { createMcpHarness, parseToolResult, type McpHarness } from '../../helpers/mcp-harness';
 
 beforeAll(() => {
@@ -70,7 +70,7 @@ async function withResourceHarness(userId: number, fn: (h: McpHarness) => Promis
 // ---------------------------------------------------------------------------
 
 describe('Tool: set_budget_item_members', () => {
-  it('sets members and broadcasts budget:members-updated', async () => {
+  it('sets members and returns a hydrated item with members/payers', async () => {
     const { user } = createUser(testDb);
     const trip = createTrip(testDb, user.id);
     const item = createBudgetItem(testDb, trip.id, { name: 'Flights', total_price: 500 });
@@ -80,8 +80,22 @@ describe('Tool: set_budget_item_members', () => {
         arguments: { tripId: trip.id, itemId: item.id, userIds: [user.id] },
       });
       const data = parseToolResult(result) as any;
-      expect(data.item).toBeDefined();
+      // Regression: returns a hydrated item, not the raw row from updateMembers.
+      expect(data.item.members.map((m: any) => m.user_id)).toEqual([user.id]);
+      expect(Array.isArray(data.item.payers)).toBe(true);
       expect(broadcastMock).toHaveBeenCalledWith(trip.id, 'budget:members-updated', expect.any(Object));
+    });
+  });
+
+  it('returns an error for an item not in the trip', async () => {
+    const { user } = createUser(testDb);
+    const trip = createTrip(testDb, user.id);
+    await withHarness(user.id, async (h) => {
+      const result = await h.client.callTool({
+        name: 'set_budget_item_members',
+        arguments: { tripId: trip.id, itemId: 99999, userIds: [user.id] },
+      });
+      expect(result.isError).toBe(true);
     });
   });
 
@@ -132,6 +146,58 @@ describe('Tool: set_budget_item_members', () => {
 });
 
 // ---------------------------------------------------------------------------
+// create_budget_item_with_members
+// ---------------------------------------------------------------------------
+
+describe('Tool: create_budget_item_with_members', () => {
+  it('assigns the given members and returns a hydrated item', async () => {
+    const { user } = createUser(testDb);
+    const { user: member } = createUser(testDb);
+    const trip = createTrip(testDb, user.id);
+    addTripMember(testDb, trip.id, member.id);
+    await withHarness(user.id, async (h) => {
+      const result = await h.client.callTool({
+        name: 'create_budget_item_with_members',
+        arguments: { tripId: trip.id, name: 'Villa', total_price: 800, userIds: [user.id, member.id] },
+      });
+      const data = parseToolResult(result) as any;
+      expect(data.item.members.map((m: any) => m.user_id).sort()).toEqual([user.id, member.id].sort());
+      expect(data.item.persons).toBe(2);
+    });
+  });
+
+  // Regression: omitting userIds previously produced an empty-member (unsaveable) entity.
+  it('defaults to all trip members when userIds omitted', async () => {
+    const { user } = createUser(testDb);
+    const { user: member } = createUser(testDb);
+    const trip = createTrip(testDb, user.id);
+    addTripMember(testDb, trip.id, member.id);
+    await withHarness(user.id, async (h) => {
+      const result = await h.client.callTool({
+        name: 'create_budget_item_with_members',
+        arguments: { tripId: trip.id, name: 'Shared cab', total_price: 50 },
+      });
+      const data = parseToolResult(result) as any;
+      expect(data.item.members.map((m: any) => m.user_id).sort()).toEqual([user.id, member.id].sort());
+      expect(data.item.members.length).toBeGreaterThan(0);
+    });
+  });
+
+  it('blocks demo user', async () => {
+    process.env.DEMO_MODE = 'true';
+    const { user } = createUser(testDb, { email: 'demo@nomad.app' });
+    const trip = createTrip(testDb, user.id);
+    await withHarness(user.id, async (h) => {
+      const result = await h.client.callTool({
+        name: 'create_budget_item_with_members',
+        arguments: { tripId: trip.id, name: 'X', total_price: 1 },
+      });
+      expect(result.isError).toBe(true);
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // toggle_budget_member_paid
 // ---------------------------------------------------------------------------
 
@@ -165,6 +231,115 @@ describe('Tool: toggle_budget_member_paid', () => {
       });
       expect(result.isError).toBe(true);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Settlements (settle-up payments)
+// ---------------------------------------------------------------------------
+
+describe('Settlement tools', () => {
+  function tripWithTwo() {
+    const { user } = createUser(testDb);
+    const { user: other } = createUser(testDb);
+    const trip = createTrip(testDb, user.id);
+    addTripMember(testDb, trip.id, other.id);
+    return { user, other, trip };
+  }
+
+  it('create_settlement records a payment, broadcasts, and is listed', async () => {
+    const { user, other, trip } = tripWithTwo();
+    await withHarness(user.id, async (h) => {
+      const created = await h.client.callTool({
+        name: 'create_settlement',
+        arguments: { tripId: trip.id, from_user_id: other.id, to_user_id: user.id, amount: 42.5 },
+      });
+      const cData = parseToolResult(created) as any;
+      expect(cData.settlement.from_user_id).toBe(other.id);
+      expect(cData.settlement.to_user_id).toBe(user.id);
+      expect(cData.settlement.amount).toBe(42.5);
+      expect(broadcastMock).toHaveBeenCalledWith(trip.id, 'budget:settlement-created', expect.any(Object));
+
+      const listed = await h.client.callTool({ name: 'list_settlements', arguments: { tripId: trip.id } });
+      const lData = parseToolResult(listed) as any;
+      expect(lData.settlements).toHaveLength(1);
+      expect(lData.settlements[0].id).toBe(cData.settlement.id);
+    });
+  });
+
+  it('update_settlement changes the amount; delete_settlement removes it', async () => {
+    const { user, other, trip } = tripWithTwo();
+    await withHarness(user.id, async (h) => {
+      const created = parseToolResult(await h.client.callTool({
+        name: 'create_settlement',
+        arguments: { tripId: trip.id, from_user_id: other.id, to_user_id: user.id, amount: 10 },
+      })) as any;
+      const id = created.settlement.id;
+
+      const updated = parseToolResult(await h.client.callTool({
+        name: 'update_settlement',
+        arguments: { tripId: trip.id, settlementId: id, from_user_id: other.id, to_user_id: user.id, amount: 25 },
+      })) as any;
+      expect(updated.settlement.amount).toBe(25);
+      expect(broadcastMock).toHaveBeenCalledWith(trip.id, 'budget:settlement-updated', expect.any(Object));
+
+      const deleted = parseToolResult(await h.client.callTool({
+        name: 'delete_settlement',
+        arguments: { tripId: trip.id, settlementId: id },
+      })) as any;
+      expect(deleted.success).toBe(true);
+      expect(broadcastMock).toHaveBeenCalledWith(trip.id, 'budget:settlement-deleted', expect.any(Object));
+
+      const remaining = testDb.prepare('SELECT count(*) as cnt FROM budget_settlements WHERE trip_id = ?').get(trip.id) as any;
+      expect(remaining.cnt).toBe(0);
+    });
+  });
+
+  it('update_settlement returns an error when the settlement is missing', async () => {
+    const { user, other, trip } = tripWithTwo();
+    await withHarness(user.id, async (h) => {
+      const result = await h.client.callTool({
+        name: 'update_settlement',
+        arguments: { tripId: trip.id, settlementId: 99999, from_user_id: other.id, to_user_id: user.id, amount: 5 },
+      });
+      expect(result.isError).toBe(true);
+    });
+  });
+
+  it('create_settlement is denied for a non-member', async () => {
+    const { user } = createUser(testDb);
+    const { user: other } = createUser(testDb);
+    const trip = createTrip(testDb, other.id);
+    await withHarness(user.id, async (h) => {
+      const result = await h.client.callTool({
+        name: 'create_settlement',
+        arguments: { tripId: trip.id, from_user_id: other.id, to_user_id: other.id, amount: 5 },
+      });
+      expect(result.isError).toBe(true);
+    });
+  });
+
+  it('get_settlement_summary returns balances and flows', async () => {
+    // Avoid a real exchange-rate network call: force getRates() to fail closed.
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('offline'); }));
+    try {
+      const { user, other, trip } = tripWithTwo();
+      // user paid 100 for an item split between both → other owes user 50.
+      const item = createBudgetItem(testDb, trip.id, { total_price: 100 });
+      testDb.prepare('INSERT INTO budget_item_members (budget_item_id, user_id, paid) VALUES (?, ?, 0), (?, ?, 0)')
+        .run(item.id, user.id, item.id, other.id);
+      testDb.prepare('INSERT INTO budget_item_payers (budget_item_id, user_id, amount) VALUES (?, ?, ?)')
+        .run(item.id, user.id, 100);
+      await withHarness(user.id, async (h) => {
+        const result = await h.client.callTool({ name: 'get_settlement_summary', arguments: { tripId: trip.id } });
+        const data = parseToolResult(result) as any;
+        expect(data.summary).toBeDefined();
+        expect(Array.isArray(data.summary.balances)).toBe(true);
+        expect(Array.isArray(data.summary.flows)).toBe(true);
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
 

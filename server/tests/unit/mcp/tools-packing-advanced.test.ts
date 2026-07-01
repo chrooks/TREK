@@ -39,7 +39,7 @@ vi.mock('../../../src/websocket', () => ({ broadcast: broadcastMock }));
 import { createTables } from '../../../src/db/schema';
 import { runMigrations } from '../../../src/db/migrations';
 import { resetTestDb } from '../../helpers/test-db';
-import { createUser, createTrip, createPackingItem } from '../../helpers/factories';
+import { createUser, createAdmin, createTrip, createPackingItem } from '../../helpers/factories';
 import { createMcpHarness, parseToolResult, type McpHarness } from '../../helpers/mcp-harness';
 
 beforeAll(() => {
@@ -148,6 +148,8 @@ describe('Tool: create_packing_bag', () => {
       const data = parseToolResult(result) as any;
       expect(data.bag).toBeDefined();
       expect(data.bag.name).toBe('Checked bag');
+      // hydrated to match listBags/schema, which always carry a members array
+      expect(data.bag.members).toEqual([]);
       expect(broadcastMock).toHaveBeenCalledWith(trip.id, 'packing:bag-created', expect.any(Object));
     });
   });
@@ -267,8 +269,9 @@ describe('Tool: set_bag_members', () => {
         arguments: { tripId: trip.id, bagId, userIds: [user.id] },
       });
       const data = parseToolResult(result) as any;
-      expect(data.success).toBe(true);
-      expect(broadcastMock).toHaveBeenCalledWith(trip.id, 'packing:bag-members-updated', expect.any(Object));
+      // Returns the hydrated members list (REST parity), not { success }.
+      expect(data.members.map((m: any) => m.user_id)).toEqual([user.id]);
+      expect(broadcastMock).toHaveBeenCalledWith(trip.id, 'packing:bag-members-updated', expect.objectContaining({ members: expect.any(Array) }));
     });
   });
 
@@ -284,7 +287,7 @@ describe('Tool: set_bag_members', () => {
         arguments: { tripId: trip.id, bagId, userIds: [] },
       });
       const data = parseToolResult(result) as any;
-      expect(data.success).toBe(true);
+      expect(data.members).toEqual([]);
     });
   });
 });
@@ -322,8 +325,9 @@ describe('Tool: set_packing_category_assignees', () => {
         arguments: { tripId: trip.id, categoryName: 'Clothing', userIds: [user.id] },
       });
       const data = parseToolResult(result) as any;
-      expect(data.success).toBe(true);
-      expect(broadcastMock).toHaveBeenCalledWith(trip.id, 'packing:assignees', expect.any(Object));
+      // Returns the hydrated assignees list (REST parity), not { success }.
+      expect(data.assignees.map((a: any) => a.user_id)).toEqual([user.id]);
+      expect(broadcastMock).toHaveBeenCalledWith(trip.id, 'packing:assignees', expect.objectContaining({ category: 'Clothing', assignees: expect.any(Array) }));
     });
   });
 
@@ -337,7 +341,7 @@ describe('Tool: set_packing_category_assignees', () => {
         arguments: { tripId: trip.id, categoryName: 'Clothing', userIds: [] },
       });
       const data = parseToolResult(result) as any;
-      expect(data.success).toBe(true);
+      expect(data.assignees).toEqual([]);
     });
   });
 
@@ -378,8 +382,8 @@ describe('Tool: apply_packing_template', () => {
 // ---------------------------------------------------------------------------
 
 describe('Tool: save_packing_template', () => {
-  it('saves the current packing list as a template', async () => {
-    const { user } = createUser(testDb);
+  it('saves the current packing list as a template for an admin', async () => {
+    const { user } = createAdmin(testDb);
     const trip = createTrip(testDb, user.id);
     createPackingItem(testDb, trip.id, { name: 'Toothbrush', category: 'Toiletries' });
     await withHarness(user.id, async (h) => {
@@ -388,7 +392,36 @@ describe('Tool: save_packing_template', () => {
         arguments: { tripId: trip.id, templateName: 'Weekend Trip' },
       });
       const data = parseToolResult(result) as any;
-      expect(data.success).toBe(true);
+      // Save now returns the new template (with its id) instead of a bare success flag.
+      expect(data.template).toBeDefined();
+      expect(Number.isInteger(data.template.id)).toBe(true);
+      expect(data.template.name).toBe('Weekend Trip');
+    });
+  });
+
+  it('returns an error when the packing list is empty', async () => {
+    const { user } = createAdmin(testDb);
+    const trip = createTrip(testDb, user.id);
+    await withHarness(user.id, async (h) => {
+      const result = await h.client.callTool({
+        name: 'save_packing_template',
+        arguments: { tripId: trip.id, templateName: 'Empty' },
+      });
+      expect(result.isError).toBe(true);
+    });
+  });
+
+  it('denies a non-admin editor (parity with the REST admin gate)', async () => {
+    const { user } = createUser(testDb);
+    const trip = createTrip(testDb, user.id);
+    createPackingItem(testDb, trip.id, { name: 'Toothbrush', category: 'Toiletries' });
+    await withHarness(user.id, async (h) => {
+      const result = await h.client.callTool({
+        name: 'save_packing_template',
+        arguments: { tripId: trip.id, templateName: 'Weekend Trip' },
+      });
+      expect(result.isError).toBe(true);
+      expect((result.content as any)[0].text).toBe('Admin access required');
     });
   });
 
@@ -407,11 +440,95 @@ describe('Tool: save_packing_template', () => {
 });
 
 // ---------------------------------------------------------------------------
+// list_packing_templates / delete_packing_template
+// ---------------------------------------------------------------------------
+
+describe('Tool: list_packing_templates', () => {
+  it('lists saved templates with their ids and item counts', async () => {
+    const { user } = createAdmin(testDb);
+    const trip = createTrip(testDb, user.id);
+    createPackingItem(testDb, trip.id, { name: 'Toothbrush', category: 'Toiletries' });
+    await withHarness(user.id, async (h) => {
+      const saved = parseToolResult(await h.client.callTool({
+        name: 'save_packing_template',
+        arguments: { tripId: trip.id, templateName: 'Beach' },
+      })) as any;
+
+      const listed = parseToolResult(await h.client.callTool({
+        name: 'list_packing_templates',
+        arguments: { tripId: trip.id },
+      })) as any;
+      expect(listed.templates.some((t: any) => t.id === saved.template.id && t.name === 'Beach')).toBe(true);
+    });
+  });
+
+  it('is available to a non-admin trip member (read-only)', async () => {
+    const { user } = createUser(testDb);
+    const trip = createTrip(testDb, user.id);
+    await withHarness(user.id, async (h) => {
+      const result = await h.client.callTool({
+        name: 'list_packing_templates',
+        arguments: { tripId: trip.id },
+      });
+      expect(result.isError).toBeFalsy();
+      const data = parseToolResult(result) as any;
+      expect(Array.isArray(data.templates)).toBe(true);
+    });
+  });
+});
+
+describe('Tool: delete_packing_template', () => {
+  it('removes a template for an admin', async () => {
+    const { user } = createAdmin(testDb);
+    const trip = createTrip(testDb, user.id);
+    createPackingItem(testDb, trip.id, { name: 'Toothbrush', category: 'Toiletries' });
+    await withHarness(user.id, async (h) => {
+      const saved = parseToolResult(await h.client.callTool({
+        name: 'save_packing_template',
+        arguments: { tripId: trip.id, templateName: 'Ski' },
+      })) as any;
+      const id = saved.template.id;
+
+      const deleted = parseToolResult(await h.client.callTool({
+        name: 'delete_packing_template',
+        arguments: { templateId: id },
+      })) as any;
+      expect(deleted.success).toBe(true);
+      const remaining = testDb.prepare('SELECT count(*) as cnt FROM packing_templates WHERE id = ?').get(id) as any;
+      expect(remaining.cnt).toBe(0);
+    });
+  });
+
+  it('denies a non-admin (parity with the REST admin gate)', async () => {
+    const { user } = createUser(testDb);
+    await withHarness(user.id, async (h) => {
+      const result = await h.client.callTool({
+        name: 'delete_packing_template',
+        arguments: { templateId: 1 },
+      });
+      expect(result.isError).toBe(true);
+      expect((result.content as any)[0].text).toBe('Admin access required');
+    });
+  });
+
+  it('returns an error for a missing template', async () => {
+    const { user } = createAdmin(testDb);
+    await withHarness(user.id, async (h) => {
+      const result = await h.client.callTool({
+        name: 'delete_packing_template',
+        arguments: { templateId: 99999 },
+      });
+      expect(result.isError).toBe(true);
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // bulk_import_packing
 // ---------------------------------------------------------------------------
 
 describe('Tool: bulk_import_packing', () => {
-  it('imports multiple packing items and count matches', async () => {
+  it('imports multiple packing items, returns them, and broadcasts per item', async () => {
     const { user } = createUser(testDb);
     const trip = createTrip(testDb, user.id);
     const items = [
@@ -425,9 +542,33 @@ describe('Tool: bulk_import_packing', () => {
         arguments: { tripId: trip.id, items },
       });
       const data = parseToolResult(result) as any;
-      expect(data.success).toBe(true);
+      // New contract: returns the created items (REST parity), broadcasts packing:created per item.
       expect(data.count).toBe(items.length);
-      expect(broadcastMock).toHaveBeenCalledWith(trip.id, 'packing:updated', expect.any(Object));
+      expect(Array.isArray(data.items)).toBe(true);
+      expect(data.items).toHaveLength(items.length);
+      expect(data.items[0].name).toBe('Passport');
+      expect(broadcastMock).toHaveBeenCalledWith(trip.id, 'packing:created', expect.objectContaining({ item: expect.any(Object) }));
+      expect(broadcastMock).toHaveBeenCalledTimes(items.length);
+    });
+  });
+
+  it('honors the widened fields (bag, weight_grams, checked)', async () => {
+    const { user } = createUser(testDb);
+    const trip = createTrip(testDb, user.id);
+    await withHarness(user.id, async (h) => {
+      const result = await h.client.callTool({
+        name: 'bulk_import_packing',
+        arguments: {
+          tripId: trip.id,
+          items: [{ name: 'Tent', category: 'Camping', bag: 'Backpack', weight_grams: 2500, checked: true }],
+        },
+      });
+      const data = parseToolResult(result) as any;
+      expect(data.count).toBe(1);
+      const item = data.items[0];
+      expect(item.weight_grams).toBe(2500);
+      expect(item.checked).toBe(1);
+      expect(item.bag_id).toBeTruthy(); // "Backpack" bag was created and assigned
     });
   });
 

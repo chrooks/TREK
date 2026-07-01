@@ -1,5 +1,7 @@
-import { db, canAccessTrip } from '../db/database';
+import { db } from '../db/database';
 import { Reservation } from '../types';
+
+export { verifyTripAccess } from './tripAccess';
 
 export interface ReservationEndpoint {
   id?: number;
@@ -15,13 +17,9 @@ export interface ReservationEndpoint {
   local_date: string | null;
 }
 
-type EndpointInput = Omit<ReservationEndpoint, 'id' | 'reservation_id' | 'sequence'> & { sequence?: number };
+export type EndpointInput = Omit<ReservationEndpoint, 'id' | 'reservation_id' | 'sequence'> & { sequence?: number };
 
-export function verifyTripAccess(tripId: string | number, userId: number) {
-  return canAccessTrip(tripId, userId);
-}
-
-function loadEndpointsByTrip(tripId: string | number): Map<number, ReservationEndpoint[]> {
+export function loadEndpointsByTrip(tripId: string | number): Map<number, ReservationEndpoint[]> {
   const rows = db.prepare(`
     SELECT e.* FROM reservation_endpoints e
     JOIN reservations r ON e.reservation_id = r.id
@@ -59,6 +57,34 @@ function resolveDayIdFromTime(
     .prepare('SELECT id FROM days WHERE trip_id = ? AND date = ? LIMIT 1')
     .get(tripId, datePart) as { id: number } | undefined;
   return row?.id ?? null;
+}
+
+// After a trip's date range changes, generateDays positionally re-dates the day rows
+// (keeping their ids), so a dated booking's day_id stays glued to a now-re-dated day and
+// the booking visually shifts by the offset (#1288). Re-anchor non-hotel bookings to the
+// day matching their absolute reservation_time — the same derivation create/updateReservation
+// use. Only updates when a matching day exists, so a booking whose date now falls outside
+// the new range is left untouched. Hotels keep their range on the linked day_accommodation.
+export function resyncReservationDays(tripId: string | number): void {
+  const rows = db.prepare(
+    `SELECT id, reservation_time, reservation_end_time, day_id, end_day_id
+       FROM reservations
+      WHERE trip_id = ? AND type != 'hotel' AND reservation_time IS NOT NULL`,
+  ).all(tripId) as {
+    id: number; reservation_time: string | null; reservation_end_time: string | null;
+    day_id: number | null; end_day_id: number | null;
+  }[];
+  const update = db.prepare('UPDATE reservations SET day_id = ?, end_day_id = ? WHERE id = ?');
+  for (const r of rows) {
+    const newDayId = resolveDayIdFromTime(tripId, r.reservation_time);
+    if (newDayId == null) continue;
+    const newEndDayId = r.reservation_end_time
+      ? (resolveDayIdFromTime(tripId, r.reservation_end_time) ?? r.end_day_id)
+      : r.end_day_id;
+    if (newDayId !== r.day_id || newEndDayId !== r.end_day_id) {
+      update.run(newDayId, newEndDayId, r.id);
+    }
+  }
 }
 
 function saveEndpoints(reservationId: number, endpoints: EndpointInput[]): void {
@@ -112,7 +138,44 @@ export function listReservations(tripId: string | number) {
   for (const r of reservations) {
     r.day_positions = posMap.get(r.id) || null;
     r.endpoints = endpointsMap.get(r.id) || [];
+    // accommodation_id is a TEXT column; the integer FK reads back as a numeric
+    // string (e.g. "14.0"). Normalize to an int so clients can parse it.
+    r.accommodation_id = r.accommodation_id == null ? null : Math.trunc(Number(r.accommodation_id));
   }
+
+  return reservations;
+}
+
+/**
+ * Upcoming reservations across all of a user's active trips, soonest first.
+ * Used by the dashboard's "Upcoming reservations" widget. A reservation counts
+ * as upcoming when its own time is in the future, or — for timeless entries —
+ * when its day falls on or after today. Cancelled bookings are skipped.
+ */
+export function getUpcomingReservations(userId: number, limit = 6) {
+  const today = new Date().toISOString().slice(0, 10);
+  const now = new Date().toISOString();
+
+  const reservations = db.prepare(`
+    SELECT r.id, r.trip_id, r.title, r.type, r.status, r.location,
+           r.reservation_time, r.confirmation_number,
+           t.title as trip_title, t.cover_image as trip_cover,
+           d.date as day_date, p.name as place_name, p.image_url as place_image
+    FROM reservations r
+    JOIN trips t ON t.id = r.trip_id
+    LEFT JOIN trip_members tm ON tm.trip_id = t.id AND tm.user_id = ?
+    LEFT JOIN days d ON r.day_id = d.id
+    LEFT JOIN places p ON r.place_id = p.id
+    WHERE (t.user_id = ? OR tm.user_id IS NOT NULL)
+      AND t.is_archived = 0
+      AND r.status != 'cancelled'
+      AND (
+        (r.reservation_time IS NOT NULL AND r.reservation_time >= ?)
+        OR (r.reservation_time IS NULL AND d.date IS NOT NULL AND d.date >= ?)
+      )
+    ORDER BY COALESCE(r.reservation_time, d.date) ASC
+    LIMIT ?
+  `).all(userId, userId, now, today, limit) as any[];
 
   return reservations;
 }
@@ -131,6 +194,9 @@ export function getReservationWithJoins(id: string | number) {
   `).get(id) as any;
   if (!row) return undefined;
   row.endpoints = loadEndpoints(row.id);
+  // accommodation_id is a TEXT column; the integer FK reads back as a numeric
+  // string (e.g. "14.0"). Normalize to an int so clients can parse it.
+  row.accommodation_id = row.accommodation_id == null ? null : Math.trunc(Number(row.accommodation_id));
   return row;
 }
 
@@ -264,15 +330,6 @@ export function updatePositions(tripId: string | number, positions: { id: number
   }
 }
 
-export function getDayPositions(tripId: string | number, dayId: number | string) {
-  return db.prepare(`
-    SELECT rdp.reservation_id, rdp.position
-    FROM reservation_day_positions rdp
-    JOIN reservations r ON rdp.reservation_id = r.id
-    WHERE r.trip_id = ? AND rdp.day_id = ?
-  `).all(tripId, dayId) as { reservation_id: number; position: number }[];
-}
-
 export function getReservation(id: string | number, tripId: string | number) {
   return db.prepare('SELECT * FROM reservations WHERE id = ? AND trip_id = ?').get(id, tripId) as Reservation | undefined;
 }
@@ -341,12 +398,19 @@ export function updateReservation(id: string | number, tripId: string | number, 
   // otherwise derive from the (possibly updated) reservation_time so the
   // planner renders the booking on the correct day.
   let nextDayId: number | null;
-  if (day_id !== undefined) {
-    nextDayId = day_id || null;
-  } else if (reservation_time !== undefined && resolvedType !== 'hotel') {
+  if (day_id != null) {
+    // Explicit day from the client (e.g. moved on the planner).
+    nextDayId = day_id;
+  } else if (resolvedType !== 'hotel' && nextReservationTime) {
+    // No day set but we have a date — pin it to the matching day so the booking
+    // still shows in the Plan (covers bookings saved without a selected day, and
+    // the case where an earlier edit cleared day_id).
     nextDayId = resolveDayIdFromTime(tripId, nextReservationTime);
-  } else {
+  } else if (day_id === undefined) {
+    // Field absent and nothing to derive from — keep whatever it had.
     nextDayId = current.day_id ?? null;
+  } else {
+    nextDayId = null;
   }
 
   let nextEndDayId: number | null;
@@ -418,9 +482,9 @@ export function updateReservation(id: string | number, tripId: string | number, 
   return { reservation, accommodationChanged };
 }
 
-export function deleteReservation(id: string | number, tripId: string | number): { deleted: { id: number; title: string; type: string; accommodation_id: number | null } | undefined; accommodationDeleted: boolean } {
+export function deleteReservation(id: string | number, tripId: string | number): { deleted: { id: number; title: string; type: string; accommodation_id: number | null } | undefined; accommodationDeleted: boolean; deletedBudgetItemId: number | null } {
   const reservation = db.prepare('SELECT id, title, type, accommodation_id FROM reservations WHERE id = ? AND trip_id = ?').get(id, tripId) as { id: number; title: string; type: string; accommodation_id: number | null } | undefined;
-  if (!reservation) return { deleted: undefined, accommodationDeleted: false };
+  if (!reservation) return { deleted: undefined, accommodationDeleted: false, deletedBudgetItemId: null };
 
   let accommodationDeleted = false;
   if (reservation.accommodation_id) {
@@ -428,6 +492,11 @@ export function deleteReservation(id: string | number, tripId: string | number):
     accommodationDeleted = true;
   }
 
+  const linkedBudget = db.prepare('SELECT id FROM budget_items WHERE trip_id = ? AND reservation_id = ?').get(tripId, id) as { id: number } | undefined;
+  if (linkedBudget) {
+    db.prepare('DELETE FROM budget_items WHERE id = ?').run(linkedBudget.id);
+  }
+
   db.prepare('DELETE FROM reservations WHERE id = ?').run(id);
-  return { deleted: reservation, accommodationDeleted };
+  return { deleted: reservation, accommodationDeleted, deletedBudgetItemId: linkedBudget ? linkedBudget.id : null };
 }

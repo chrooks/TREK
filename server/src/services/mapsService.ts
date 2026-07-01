@@ -1,18 +1,20 @@
 import { db } from '../db/database';
 import { decrypt_api_key } from './apiKeyCrypto';
-import { checkSsrf } from '../utils/ssrfGuard';
+import { safeFetchFollow, SsrfBlockedError } from '../utils/ssrfGuard';
+import { getAppUrl } from './notifications';
 
 // ── Google API call counter ───────────────────────────────────────────────────
 
 let googleApiCallCount = 0;
 
-export function getGoogleApiCallCount(): number { return googleApiCallCount; }
-export function resetGoogleApiCallCount(): void { googleApiCallCount = 0; }
-
 function googleFetch(endpoint: string, label: string, init?: RequestInit): Promise<Response> {
   googleApiCallCount++;
   console.debug(`[Google API] #${googleApiCallCount} ${label} → ${endpoint}`);
-  return fetch(endpoint, init);
+  const referer = process.env.APP_URL ? getAppUrl() : undefined;
+  return fetch(endpoint, {
+    ...init,
+    headers: { ...(referer ? { Referer: referer } : {}), ...(init?.headers as Record<string, string> ?? {}) },
+  });
 }
 
 // ── Interfaces ───────────────────────────────────────────────────────────────
@@ -31,7 +33,7 @@ interface OverpassElement {
 }
 
 interface WikiCommonsPage {
-  imageinfo?: { url?: string; extmetadata?: { Artist?: { value?: string } } }[];
+  imageinfo?: { url?: string; thumburl?: string; extmetadata?: { Artist?: { value?: string } } }[];
 }
 
 interface GooglePlaceResult {
@@ -43,6 +45,7 @@ interface GooglePlaceResult {
   websiteUri?: string;
   nationalPhoneNumber?: string;
   types?: string[];
+  googleMapsUri?: string;
 }
 
 interface GoogleAutocompleteSuggestion {
@@ -58,7 +61,6 @@ interface GoogleAutocompleteSuggestion {
 interface GooglePlaceDetails extends GooglePlaceResult {
   userRatingCount?: number;
   regularOpeningHours?: { weekdayDescriptions?: string[]; openNow?: boolean };
-  googleMapsUri?: string;
   editorialSummary?: { text: string };
   reviews?: { authorAttribution?: { displayName?: string; photoUri?: string }; rating?: number; text?: { text?: string }; relativePublishTimeDescription?: string }[];
   photos?: { name: string; authorAttributions?: { displayName?: string }[] }[];
@@ -66,7 +68,52 @@ interface GooglePlaceDetails extends GooglePlaceResult {
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-const UA = 'TREK Travel Planner (https://github.com/mauriceboe/TREK)';
+// Overpass, Nominatim and Wikimedia all ask that requests carry a User-Agent that
+// uniquely identifies the deploying instance — a shared, generic UA gets rate-limited
+// and throttled harder (see #1309). When the instance URL is configured we append it;
+// getAppUrl()'s bare http://localhost fallback isn't a useful identifier, so we drop it.
+export function buildUserAgent(instanceUrl: string | undefined): string {
+  const base = 'TREK Travel Planner (https://github.com/mauriceboe/TREK)';
+  if (instanceUrl && !instanceUrl.startsWith('http://localhost')) return `${base}; ${instanceUrl}`;
+  return base;
+}
+// Computed once at load — getAppUrl() reads only env vars, which don't change at runtime.
+const UA = buildUserAgent(getAppUrl());
+
+// TREK's internal language codes mostly coincide with valid BCP-47 codes, but a
+// couple don't: 'br' is Brazilian Portuguese here (BCP-47 'pt-BR'; bare 'br' is
+// Breton) and 'gr' is Greek (BCP-47 'el'). Outbound geo APIs (Google Places,
+// Nominatim) expect BCP-47, so normalise before sending — otherwise names and
+// opening hours come back in the wrong language. Codes not listed here pass
+// through unchanged (they are already valid), as do locale forms the client
+// sometimes sends (e.g. 'pt-BR').
+const API_LANG_OVERRIDES: Record<string, string> = {
+  br: 'pt-BR',
+  gr: 'el',
+  'el-GR': 'el',
+};
+function toApiLang(lang: string | undefined, fallback = 'en'): string {
+  const code = (lang || '').trim();
+  if (!code) return fallback;
+  return API_LANG_OVERRIDES[code] ?? code;
+}
+
+const GOOGLE_FTID_RE = /^0x[0-9a-f]+:0x[0-9a-f]+$/i;
+
+// Extracts a Google Maps feature id (ftid, 0x..:0x..) from a URL's ?ftid= param.
+// The Places API (New) googleMapsUri is usually a cid-style URL (https://maps.google.com/?cid=NNN)
+// with no ftid, so this returns null for most API responses — the precise query_place_id link is
+// used instead. It does recover an ftid from a /place/?...&ftid= URL, e.g. a pasted share link
+// resolved by resolveGoogleMapsUrl or a Google MyMaps list import.
+export function googleFtidFromMapsUrl(url?: string | null): string | null {
+  if (!url) return null;
+  try {
+    const ftid = new URL(url).searchParams.get('ftid')?.trim();
+    return ftid && GOOGLE_FTID_RE.test(ftid) ? ftid.toLowerCase() : null;
+  } catch {
+    return null;
+  }
+}
 
 // ── Photo cache (disk-backed) ────────────────────────────────────────────────
 import * as placePhotoCache from './placePhotoCache';
@@ -113,7 +160,7 @@ export async function searchNominatim(query: string, lang?: string) {
     format: 'json',
     addressdetails: '1',
     limit: '10',
-    'accept-language': lang || 'en',
+    'accept-language': toApiLang(lang),
   });
   const response = await fetch(`https://nominatim.openstreetmap.org/search?${params}`, {
     headers: { 'User-Agent': UA },
@@ -125,6 +172,7 @@ export async function searchNominatim(query: string, lang?: string) {
   const data = await response.json() as NominatimResult[];
   return data.map(item => ({
     google_place_id: null,
+    google_ftid: null,
     osm_id: `${item.osm_type}:${item.osm_id}`,
     name: item.name || item.display_name?.split(',')[0] || '',
     address: item.display_name || '',
@@ -146,7 +194,7 @@ export async function lookupNominatim(osmType: string, osmId: string, lang?: str
   const params = new URLSearchParams({
     osm_ids: `${typePrefix}${osmId}`,
     format: 'json',
-    'accept-language': lang || 'en',
+    'accept-language': toApiLang(lang),
   });
   try {
     const res = await fetch(`https://nominatim.openstreetmap.org/lookup?${params}`, {
@@ -182,6 +230,241 @@ export async function fetchOverpassDetails(osmType: string, osmId: string): Prom
     const data = await res.json() as { elements?: OverpassElement[] };
     return data.elements?.[0] || null;
   } catch { return null; }
+}
+
+// ── Overpass POI search (by category within a viewport bbox) ─────────────────
+// Powers the "explore places on the map" pill. OSM-ONLY by design — this never
+// calls Google, even when a Google key is configured.
+
+export interface OverpassPoi {
+  osm_id: string; // 'node:123' | 'way:123' | 'relation:123' (matches the placeId format elsewhere)
+  name: string;
+  lat: number;
+  lng: number;
+  category: string; // the requested pill category key, e.g. 'restaurant'
+  poi_type: string; // the raw OSM tag that matched, e.g. 'amenity=restaurant'
+  address: string | null;
+  website: string | null;
+  phone: string | null;
+  opening_hours: string | null;
+  cuisine: string | null;
+  source: 'openstreetmap';
+}
+
+// Each pill category → the OSM tag selectors it searches. Keys here are the
+// contract with the client's POI_CATEGORIES (same keys, label/icon/colour live
+// client-side).
+const CATEGORY_OSM_FILTERS: Record<string, string[]> = {
+  restaurant: ['amenity=restaurant', 'amenity=fast_food'],
+  cafe: ['amenity=cafe'],
+  bar: ['amenity=bar', 'amenity=pub', 'amenity=nightclub'],
+  hotel: ['tourism=hotel', 'tourism=hostel', 'tourism=guest_house', 'tourism=apartment', 'tourism=motel'],
+  sights: ['tourism=attraction', 'tourism=viewpoint', 'historic=monument', 'historic=castle', 'historic=memorial', 'historic=ruins'],
+  museum: ['tourism=museum', 'tourism=gallery', 'tourism=artwork', 'amenity=theatre'],
+  nature: ['leisure=park', 'leisure=garden', 'natural=beach', 'natural=peak'],
+  activity: ['tourism=theme_park', 'tourism=zoo', 'tourism=aquarium', 'leisure=water_park'],
+  shopping: ['shop=mall', 'shop=department_store', 'amenity=marketplace'],
+  supermarket: ['shop=supermarket', 'shop=convenience'],
+};
+
+export const POI_CATEGORY_KEYS = Object.keys(CATEGORY_OSM_FILTERS);
+
+interface OverpassPoiElement {
+  type: string;
+  id: number;
+  lat?: number;
+  lon?: number;
+  center?: { lat: number; lon: number };
+  tags?: Record<string, string>;
+}
+
+interface PoiSearchResult {
+  pois: OverpassPoi[];
+  source: 'openstreetmap';
+  truncated: boolean;
+  // True when the requested viewport was too large and got shrunk to a centred
+  // window before querying — the results then cover the middle of the view only.
+  clamped: boolean;
+}
+
+// Public Overpass mirrors, queried in PARALLEL (first valid response wins).
+// Reachability and load vary a lot by network/region — the canonical instance is
+// frequently overloaded (504s) and some community mirrors are unreachable from
+// certain networks. Racing them means whichever mirror is fastest-reachable for
+// this user answers, and an overloaded or blocked one never blocks the others.
+const DEFAULT_OVERPASS_MIRRORS = [
+  'https://overpass-api.de/api/interpreter',
+  'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter',
+  'https://overpass.private.coffee/api/interpreter',
+];
+
+// Operators behind locked-down egress — or running their own Overpass — can point TREK
+// at one or more custom endpoints via OVERPASS_URL (comma-separated). When set it
+// REPLACES the public mirrors, so a firewalled cluster never reaches out to them and a
+// self-hosted instance is used exclusively (see #1309). Non-http(s) entries are dropped.
+export function resolveOverpassEndpoints(raw: string | undefined = process.env.OVERPASS_URL): string[] {
+  const custom = (raw ?? '')
+    .split(',')
+    .map(s => s.trim())
+    .filter(s => {
+      try { const u = new URL(s); return u.protocol === 'http:' || u.protocol === 'https:'; }
+      catch { return false; }
+    });
+  return custom.length ? custom : DEFAULT_OVERPASS_MIRRORS;
+}
+const OVERPASS_MIRRORS = resolveOverpassEndpoints();
+// Per-mirror fetch cap. Because mirrors race in parallel this is also the worst-case
+// wait before every mirror is given up on and a 502 is returned. Public mirrors answer
+// in 1–2s when reachable, so the cap mainly bounds dead/blocked ones; operators with a
+// slow self-hosted endpoint can raise it via OVERPASS_TIMEOUT_MS. A non-positive or
+// non-numeric value falls back to the default — a 0/negative cap would abort every
+// request immediately and 502 the search.
+export function resolveOverpassTimeoutMs(raw: string | undefined = process.env.OVERPASS_TIMEOUT_MS): number {
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : 12000;
+}
+const OVERPASS_TIMEOUT_MS = resolveOverpassTimeoutMs();
+// Largest viewport side we send to Overpass. A country/continent-sized bbox makes
+// Overpass scan millions of elements and time out; clamping to a centred window
+// keeps the query cheap so the explore pill returns fast at ANY zoom level.
+const MAX_BBOX_SPAN_DEG = 0.5;
+
+// Short-lived cache so panning back over / re-toggling the same area doesn't
+// re-hit Overpass. Keyed by category + rounded (post-clamp) bbox.
+const POI_CACHE = new Map<string, { at: number; value: PoiSearchResult }>();
+const POI_CACHE_TTL_MS = 5 * 60 * 1000;
+// Cap the number of cached areas so panning across the globe can't grow the map
+// without bound (entries are evicted oldest-first once the cap is reached).
+const POI_CACHE_MAX = 500;
+
+// POST the query to all mirrors at once and return the first one that answers with
+// valid JSON. Throws {status:502} only if every mirror fails. Racing (rather than
+// trying one-by-one) keeps latency at the fastest reachable mirror instead of the
+// sum of every dead mirror's timeout.
+async function overpassFetch(query: string): Promise<OverpassPoiElement[]> {
+  const body = `data=${encodeURIComponent(query)}`;
+  const controllers: AbortController[] = [];
+
+  const attempt = async (url: string): Promise<OverpassPoiElement[]> => {
+    const ctrl = new AbortController();
+    controllers.push(ctrl);
+    const timer = setTimeout(() => ctrl.abort(), OVERPASS_TIMEOUT_MS);
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'User-Agent': UA, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body,
+        signal: ctrl.signal,
+      });
+      if (!res.ok) throw new Error(`Overpass ${res.status} @ ${url}`);
+      const data = await res.json() as { elements?: OverpassPoiElement[]; remark?: string };
+      // Overpass signals an internal timeout / runtime error via `remark` while
+      // still answering HTTP 200 — often fast, with an empty or partial element
+      // set. Treat that as a failed attempt so a healthy mirror wins the race
+      // instead of this fast-but-empty answer, and so the all-mirrors-failed path
+      // still surfaces a real error to the client instead of a silent "no places".
+      if (data.remark) throw new Error(`Overpass remark @ ${url}: ${data.remark}`);
+      if (!Array.isArray(data.elements)) throw new Error(`Overpass non-OSM body @ ${url}`);
+      return data.elements;
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  try {
+    // Promise.any resolves with the first mirror to return valid JSON, and only
+    // rejects (AggregateError) once every mirror has failed.
+    return await Promise.any(OVERPASS_MIRRORS.map(attempt));
+  } catch (err) {
+    // Log WHY every endpoint failed (connection refused, aborted/timed out, non-OSM
+    // body, …) so an operator can tell blocked egress / a firewall from a transiently
+    // overloaded mirror — otherwise this is a bare 502 with no breadcrumb (see #1309).
+    const reasons = err instanceof AggregateError
+      ? err.errors.map(e => (e instanceof Error ? e.message : String(e))).join(' | ')
+      : (err instanceof Error ? err.message : String(err));
+    console.error(`[Overpass] all ${OVERPASS_MIRRORS.length} endpoint(s) failed — ${reasons}`);
+    throw Object.assign(new Error('Could not reach any Overpass endpoint'), { status: 502 });
+  } finally {
+    // Cancel the slower/losing requests — we already have (or have given up on) a result.
+    controllers.forEach(c => { try { c.abort(); } catch { /* noop */ } });
+  }
+}
+
+export async function searchOverpassPois(
+  category: string,
+  bbox: { south: number; west: number; north: number; east: number },
+  limit = 60,
+): Promise<PoiSearchResult> {
+  const filters = CATEGORY_OSM_FILTERS[category];
+  if (!filters) throw Object.assign(new Error('Unknown POI category'), { status: 400 });
+
+  // Clamp an oversized viewport to a centred window so the query stays cheap and
+  // returns fast at any zoom, instead of timing out / 502-ing on a huge area.
+  let { south, west, north, east } = bbox;
+  let clamped = false;
+  if (north - south > MAX_BBOX_SPAN_DEG) {
+    const c = (north + south) / 2;
+    south = c - MAX_BBOX_SPAN_DEG / 2;
+    north = c + MAX_BBOX_SPAN_DEG / 2;
+    clamped = true;
+  }
+  if (east - west > MAX_BBOX_SPAN_DEG) {
+    const c = (east + west) / 2;
+    west = c - MAX_BBOX_SPAN_DEG / 2;
+    east = c + MAX_BBOX_SPAN_DEG / 2;
+    clamped = true;
+  }
+
+  // Serve repeat pans/toggles of the same area straight from the cache.
+  const cacheKey = `${category}|${south.toFixed(2)},${west.toFixed(2)},${north.toFixed(2)},${east.toFixed(2)}|${limit}`;
+  const cached = POI_CACHE.get(cacheKey);
+  if (cached && Date.now() - cached.at < POI_CACHE_TTL_MS) return cached.value;
+  if (cached) POI_CACHE.delete(cacheKey); // expired — drop it before refetching
+
+  // Overpass wants the box as (south,west,north,east) = (minLat,minLng,maxLat,maxLng).
+  const box = `(${south},${west},${north},${east})`;
+  const selectors = filters.map(f => {
+    const [k, v] = f.split('=');
+    return `  nwr["${k}"="${v}"]${box};`;
+  }).join('\n');
+  // `out center tags <n>` returns ways/relations with a computed center and caps
+  // the result count in one round-trip.
+  const query = `[out:json][timeout:20];\n(\n${selectors}\n);\nout center tags ${limit + 25};`;
+
+  const elements = await overpassFetch(query);
+
+  const pois: OverpassPoi[] = [];
+  for (const el of elements) {
+    const tags = el.tags || {};
+    const name = tags.name || tags['name:en'] || tags.brand || null;
+    if (!name) continue; // unnamed POIs aren't useful to add to a plan
+    const lat = el.lat ?? el.center?.lat;
+    const lng = el.lon ?? el.center?.lon;
+    if (lat == null || lng == null) continue;
+    const matched = filters.find(f => { const [k, v] = f.split('='); return tags[k] === v; }) || filters[0];
+    const addr = [tags['addr:street'], tags['addr:housenumber'], tags['addr:postcode'], tags['addr:city']].filter(Boolean).join(' ') || null;
+    pois.push({
+      osm_id: `${el.type}:${el.id}`,
+      name,
+      lat,
+      lng,
+      category,
+      poi_type: matched,
+      address: addr,
+      website: tags.website || tags['contact:website'] || null,
+      phone: tags.phone || tags['contact:phone'] || null,
+      opening_hours: tags.opening_hours || null,
+      cuisine: tags.cuisine || null,
+      source: 'openstreetmap',
+    });
+  }
+  const truncated = pois.length > limit;
+  const value: PoiSearchResult = { pois: pois.slice(0, limit), source: 'openstreetmap', truncated, clamped };
+  // FIFO eviction: a Map preserves insertion order, so the first key is the oldest.
+  if (POI_CACHE.size >= POI_CACHE_MAX) POI_CACHE.delete(POI_CACHE.keys().next().value as string);
+  POI_CACHE.set(cacheKey, { at: Date.now(), value });
+  return value;
 }
 
 // ── Opening hours parsing ────────────────────────────────────────────────────
@@ -313,7 +596,9 @@ export async function fetchWikimediaPhoto(lat: number, lng: number, name?: strin
       const mime = (info as { mime?: string })?.mime || '';
       if (info?.url && (mime.startsWith('image/jpeg') || mime.startsWith('image/png'))) {
         const attribution = info.extmetadata?.Artist?.value?.replace(/<[^>]+>/g, '').trim() || null;
-        return { photoUrl: info.url, attribution };
+        // iiurlwidth=400 makes Commons also return a scaled thumburl. Prefer it —
+        // info.url is the full-resolution original (multi-megapixel camera exports).
+        return { photoUrl: info.thumburl ?? info.url, attribution };
       }
     }
     return null;
@@ -322,7 +607,7 @@ export async function fetchWikimediaPhoto(lat: number, lng: number, name?: strin
 
 // ── Search places (Google or Nominatim fallback) ─────────────────────────────
 
-export async function searchPlaces(userId: number, query: string, lang?: string): Promise<{ places: Record<string, unknown>[]; source: string }> {
+export async function searchPlaces(userId: number, query: string, lang?: string, locationBias?: { lat: number; lng: number; radius?: number }): Promise<{ places: Record<string, unknown>[]; source: string }> {
   const apiKey = getMapsKey(userId);
 
   if (!apiKey) {
@@ -330,14 +615,26 @@ export async function searchPlaces(userId: number, query: string, lang?: string)
     return { places, source: 'openstreetmap' };
   }
 
+  const searchBody: Record<string, unknown> = { textQuery: query, languageCode: toApiLang(lang) };
+  // Bias results toward the caller's area when supplied — without it Google Text
+  // Search falls back to the API key's billing region, which skews foreign-region queries.
+  if (locationBias) {
+    searchBody.locationBias = {
+      circle: {
+        center: { latitude: locationBias.lat, longitude: locationBias.lng },
+        radius: locationBias.radius ?? 50000,
+      },
+    };
+  }
+
   const response = await googleFetch('https://places.googleapis.com/v1/places:searchText', 'searchText', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'X-Goog-Api-Key': apiKey,
-      'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.location,places.rating,places.websiteUri,places.nationalPhoneNumber,places.types',
+      'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.location,places.rating,places.websiteUri,places.nationalPhoneNumber,places.types,places.googleMapsUri',
     },
-    body: JSON.stringify({ textQuery: query, languageCode: lang || 'en' }),
+    body: JSON.stringify(searchBody),
   });
 
   const data = await response.json() as { places?: GooglePlaceResult[]; error?: { message?: string } };
@@ -350,6 +647,7 @@ export async function searchPlaces(userId: number, query: string, lang?: string)
 
   const places = (data.places || []).map((p: GooglePlaceResult) => ({
     google_place_id: p.id,
+    google_ftid: googleFtidFromMapsUrl(p.googleMapsUri),
     name: p.displayName?.text || '',
     address: p.formattedAddress || '',
     lat: p.location?.latitude || null,
@@ -357,6 +655,7 @@ export async function searchPlaces(userId: number, query: string, lang?: string)
     rating: p.rating || null,
     website: p.websiteUri || null,
     phone: p.nationalPhoneNumber || null,
+    types: p.types || [],
     source: 'google',
   }));
 
@@ -379,7 +678,7 @@ export async function autocompletePlaces(
 
   const body: Record<string, unknown> = {
     input,
-    languageCode: lang || 'en',
+    languageCode: toApiLang(lang),
   };
   if (locationBias) {
     body.locationBias = {
@@ -470,7 +769,7 @@ export async function getPlaceDetails(userId: number, placeId: string, lang?: st
   }
 
   // Google details
-  const langKey = lang || 'de';
+  const langKey = toApiLang(lang, 'de');
   const apiKey = getMapsKey(userId);
   if (!apiKey) {
     throw Object.assign(new Error('Google Maps API key not configured'), { status: 400 });
@@ -501,6 +800,7 @@ export async function getPlaceDetails(userId: number, placeId: string, lang?: st
 
   const place = {
     google_place_id: data.id,
+    google_ftid: googleFtidFromMapsUrl(data.googleMapsUri),
     name: data.displayName?.text || '',
     address: data.formattedAddress || '',
     lat: data.location?.latitude || null,
@@ -530,7 +830,7 @@ export async function getPlaceDetails(userId: number, placeId: string, lang?: st
 }
 
 export async function getPlaceDetailsExpanded(userId: number, placeId: string, lang?: string, refresh = false): Promise<{ place: Record<string, unknown> }> {
-  const langKey = lang || 'de';
+  const langKey = toApiLang(lang, 'de');
   const apiKey = getMapsKey(userId);
   if (!apiKey) throw Object.assign(new Error('Google Maps API key not configured'), { status: 400 });
 
@@ -560,6 +860,7 @@ export async function getPlaceDetailsExpanded(userId: number, placeId: string, l
 
   const place = {
     google_place_id: data.id,
+    google_ftid: googleFtidFromMapsUrl(data.googleMapsUri),
     name: data.displayName?.text || '',
     address: data.formattedAddress || '',
     lat: data.location?.latitude || null,
@@ -626,90 +927,93 @@ export async function getPlacePhoto(
     const apiKey = getMapsKey(userId);
     const isCoordLookup = placeId.startsWith('coords:');
 
-    // No Google key or coordinate-only lookup → try Wikimedia (URL-based, not byte-cached)
-    if (!apiKey || isCoordLookup) {
-      if (!isNaN(lat) && !isNaN(lng)) {
-        try {
-          const wiki = await fetchWikimediaPhoto(lat, lng, name);
-          if (wiki) {
-            // Wikimedia photos: fetch bytes and cache to disk
-            const ssrf = await checkSsrf(wiki.photoUrl, true);
-            if (!ssrf.allowed) throw Object.assign(new Error('Photo URL blocked'), { status: 403 });
-            const imgRes = await fetch(wiki.photoUrl);
-            if (imgRes.ok) {
-              const bytes = Buffer.from(await imgRes.arrayBuffer());
-              const cached = await placePhotoCache.put(placeId, bytes, wiki.attribution);
-              return { filePath: cached.filePath, attribution: cached.attribution };
-            }
-          }
-        } catch { /* fall through */ }
+    // Coordinate-based Wikipedia/Wikimedia lookup. Used for coordinate-only
+    // (right-click) places and as a fallback when a Google place yields no photo,
+    // so a place added via search still gets a marker image when Google returns
+    // nothing. Returns null (without marking an error) so the caller decides.
+    const fetchWikimediaFallback = async (): Promise<{ filePath: string; attribution: string | null } | null> => {
+      if (isNaN(lat) || isNaN(lng)) return null;
+      try {
+        const wiki = await fetchWikimediaPhoto(lat, lng, name);
+        if (!wiki) return null;
+        // Follow redirects manually so each hop (the image URL can 3xx to a CDN
+        // host) is re-validated against the SSRF guard, not just the first URL.
+        const imgRes = await safeFetchFollow(wiki.photoUrl, undefined, { bypassInternalIpAllowed: true });
+        if (!imgRes.ok) return null;
+        const bytes = Buffer.from(await imgRes.arrayBuffer());
+        const cached = await placePhotoCache.put(placeId, bytes, wiki.attribution);
+        return { filePath: cached.filePath, attribution: cached.attribution };
+      } catch {
+        return null;
       }
-      placePhotoCache.markError(placeId);
-      return null;
+    };
+
+    // Google Places photo for a Google place_id. Returns null (without marking an
+    // error) on any miss — no key, URL-shaped id, request rejected, no photos, or
+    // a failed media download — so the caller can fall back to Wikimedia.
+    const fetchGooglePhoto = async (): Promise<{ filePath: string; attribution: string | null } | null> => {
+      // URL-shaped placeIds aren't Google IDs — legacy DBs may store raw photo URLs in image_url
+      if (!apiKey || /^https?:\/\//i.test(placeId)) return null;
+
+      // Fetch details to get the photo name
+      const detailsRes = await googleFetch(`https://places.googleapis.com/v1/places/${placeId}`, `getPlacePhoto/details(${placeId})`, {
+        headers: {
+          'X-Goog-Api-Key': apiKey,
+          'X-Goog-FieldMask': 'photos',
+        },
+      });
+      const body = await detailsRes.text();
+      if (!detailsRes.ok) {
+        console.error('Google Places photo details error:', detailsRes.status, body.slice(0, 200));
+        return null;
+      }
+      let details: GooglePlaceDetails & { error?: { message?: string } };
+      try { details = body ? JSON.parse(body) : { photos: [] }; }
+      catch { return null; }
+      if (!details.photos?.length) return null;
+
+      const photo = details.photos[0];
+      const photoName = photo.name;
+      const attribution = photo.authorAttributions?.[0]?.displayName || null;
+
+      // Fetch actual image bytes
+      const mediaRes = await googleFetch(
+        `https://places.googleapis.com/v1/${photoName}/media?maxHeightPx=400`,
+        `getPlacePhoto/media(${placeId})`,
+        { headers: { 'X-Goog-Api-Key': apiKey } }
+      );
+      if (!mediaRes.ok) return null;
+
+      const bytes = Buffer.from(await mediaRes.arrayBuffer());
+      if (!bytes.length) return null;
+
+      const cached = await placePhotoCache.put(placeId, bytes, attribution);
+
+      // Persist stable proxy URL to database
+      try {
+        db.prepare(
+          'UPDATE places SET image_url = ?, updated_at = CURRENT_TIMESTAMP WHERE google_place_id = ? AND (image_url IS NULL OR image_url = \'\')'
+        ).run(cached.photoUrl, placeId);
+      } catch (dbErr) {
+        console.error('Failed to persist photo URL to database:', dbErr);
+      }
+
+      return { filePath: cached.filePath, attribution };
+    };
+
+    // Prefer the Google photo (higher quality); if Google yields nothing, fall
+    // back to the same coordinate-based Wikipedia/OSM lookup that right-click
+    // places use. Coordinate-only ids skip Google entirely.
+    if (!isCoordLookup) {
+      const googlePhoto = await fetchGooglePhoto();
+      if (googlePhoto) return googlePhoto;
     }
 
-    // Reject URL-shaped placeIds — legacy DBs may store raw photo URLs in image_url
-    if (/^https?:\/\//i.test(placeId)) {
-      placePhotoCache.markError(placeId);
-      return null;
-    }
+    const fallback = await fetchWikimediaFallback();
+    if (fallback) return fallback;
 
-    // Google Photos — fetch details to get photo name
-    const detailsRes = await googleFetch(`https://places.googleapis.com/v1/places/${placeId}`, `getPlacePhoto/details(${placeId})`, {
-      headers: {
-        'X-Goog-Api-Key': apiKey,
-        'X-Goog-FieldMask': 'photos',
-      },
-    });
-    const body = await detailsRes.text();
-    if (!detailsRes.ok) {
-      console.error('Google Places photo details error:', detailsRes.status, body.slice(0, 200));
-      placePhotoCache.markError(placeId);
-      return null;
-    }
-    let details: GooglePlaceDetails & { error?: { message?: string } };
-    try { details = body ? JSON.parse(body) : { photos: [] }; }
-    catch { placePhotoCache.markError(placeId); return null; }
-
-    if (!details.photos?.length) {
-      placePhotoCache.markError(placeId);
-      return null;
-    }
-
-    const photo = details.photos[0];
-    const photoName = photo.name;
-    const attribution = photo.authorAttributions?.[0]?.displayName || null;
-
-    // Fetch actual image bytes
-    const mediaRes = await googleFetch(
-      `https://places.googleapis.com/v1/${photoName}/media?maxHeightPx=400`,
-      `getPlacePhoto/media(${placeId})`,
-      { headers: { 'X-Goog-Api-Key': apiKey } }
-    );
-
-    if (!mediaRes.ok) {
-      placePhotoCache.markError(placeId);
-      return null;
-    }
-
-    const bytes = Buffer.from(await mediaRes.arrayBuffer());
-    if (!bytes.length) {
-      placePhotoCache.markError(placeId);
-      return null;
-    }
-
-    const cached = await placePhotoCache.put(placeId, bytes, attribution);
-
-    // Persist stable proxy URL to database
-    try {
-      db.prepare(
-        'UPDATE places SET image_url = ?, updated_at = CURRENT_TIMESTAMP WHERE google_place_id = ? AND (image_url IS NULL OR image_url = \'\')'
-      ).run(cached.photoUrl, placeId);
-    } catch (dbErr) {
-      console.error('Failed to persist photo URL to database:', dbErr);
-    }
-
-    return { filePath: cached.filePath, attribution };
+    placePhotoCache.markError(placeId);
+    return null;
     } finally {
       releasePhotoFetchSlot();
     }
@@ -727,7 +1031,7 @@ export async function getPlacePhoto(
 export async function reverseGeocode(lat: string, lng: string, lang?: string): Promise<{ name: string | null; address: string | null }> {
   const params = new URLSearchParams({
     lat, lon: lng, format: 'json', addressdetails: '1', zoom: '18',
-    'accept-language': lang || 'en',
+    'accept-language': toApiLang(lang),
   });
   const response = await fetch(`https://nominatim.openstreetmap.org/reverse?${params}`, {
     headers: { 'User-Agent': UA },
@@ -741,50 +1045,76 @@ export async function reverseGeocode(lat: string, lng: string, lang?: string): P
 
 // ── Resolve Google Maps URL ──────────────────────────────────────────────────
 
-export async function resolveGoogleMapsUrl(url: string): Promise<{ lat: number; lng: number; name: string | null; address: string | null }> {
+export async function resolveGoogleMapsUrl(url: string): Promise<{ lat: number; lng: number; name: string | null; address: string | null; google_ftid: string | null }> {
   let resolvedUrl = url;
 
-  // Follow redirects for short URLs (goo.gl, maps.app.goo.gl) with SSRF protection
+  // Extract coordinates from a string (URL or page body). Google Maps encodes
+  // them several ways: /@lat,lng,zoom · !3dlat!4dlng (map data param) · ?q=/?ll=.
+  const extractCoords = (s: string): { lat: number; lng: number } | null => {
+    const at = s.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/);
+    if (at) return { lat: parseFloat(at[1]), lng: parseFloat(at[2]) };
+    const data = s.match(/!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/);
+    if (data) return { lat: parseFloat(data[1]), lng: parseFloat(data[2]) };
+    const q = s.match(/[?&](?:q|ll)=(-?\d+\.\d+),(-?\d+\.\d+)/);
+    if (q) return { lat: parseFloat(q[1]), lng: parseFloat(q[2]) };
+    return null;
+  };
+
+  const followRedirects = async (target: string, init?: RequestInit): Promise<Response> => {
+    try {
+      return await safeFetchFollow(
+        target,
+        { signal: AbortSignal.timeout(10000), ...init },
+        { bypassInternalIpAllowed: true },
+      );
+    } catch (err) {
+      if (err instanceof SsrfBlockedError) {
+        throw Object.assign(new Error('URL blocked by SSRF check'), { status: 403 });
+      }
+      throw err;
+    }
+  };
+
+  // Follow redirects for short URLs (goo.gl, maps.app.goo.gl) and for Google Maps
+  // URLs that carry no inline coordinates — e.g. ?cid= links (the format
+  // get_place_details returns) and "Share"-button links. The redirect target
+  // usually carries the !3d!4d data param we can then parse. Redirects are
+  // followed manually so every hop is SSRF-re-checked.
   const parsed = new URL(url);
-  if (['goo.gl', 'maps.app.goo.gl'].includes(parsed.hostname)) {
-    const ssrf = await checkSsrf(url, true);
-    if (!ssrf.allowed) throw Object.assign(new Error('URL blocked by SSRF check'), { status: 403 });
-    const redirectRes = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(10000) });
-    resolvedUrl = redirectRes.url;
+  const GOOGLE_MAPS_HOSTS = ['goo.gl', 'maps.app.goo.gl', 'google.com', 'www.google.com', 'maps.google.com'];
+  const isShort = ['goo.gl', 'maps.app.goo.gl'].includes(parsed.hostname);
+  const isGoogleMaps = GOOGLE_MAPS_HOSTS.includes(parsed.hostname);
+  if (isShort || (isGoogleMaps && !extractCoords(url))) {
+    resolvedUrl = (await followRedirects(url)).url || resolvedUrl;
   }
 
-  // Extract coordinates from Google Maps URL patterns:
-  // /@48.8566,2.3522,15z  or  /place/.../@48.8566,2.3522
-  // ?q=48.8566,2.3522  or  ?ll=48.8566,2.3522
-  let lat: number | null = null;
-  let lng: number | null = null;
-  let placeName: string | null = null;
+  let coords = extractCoords(resolvedUrl);
 
-  // Pattern: /@lat,lng
-  const atMatch = resolvedUrl.match(/@(-?\d+\.?\d*),(-?\d+\.?\d*)/);
-  if (atMatch) { lat = parseFloat(atMatch[1]); lng = parseFloat(atMatch[2]); }
-
-  // Pattern: !3dlat!4dlng (Google Maps data params)
-  if (!lat) {
-    const dataMatch = resolvedUrl.match(/!3d(-?\d+\.?\d*)!4d(-?\d+\.?\d*)/);
-    if (dataMatch) { lat = parseFloat(dataMatch[1]); lng = parseFloat(dataMatch[2]); }
-  }
-
-  // Pattern: ?q=lat,lng or &q=lat,lng
-  if (!lat) {
-    const qMatch = resolvedUrl.match(/[?&]q=(-?\d+\.?\d*),(-?\d+\.?\d*)/);
-    if (qMatch) { lat = parseFloat(qMatch[1]); lng = parseFloat(qMatch[2]); }
+  // Still nothing (e.g. a cid page whose final URL lacks coordinates): fetch the
+  // page body once and parse the coordinates out of the embedded map data.
+  if (!coords) {
+    try {
+      const pageRes = await followRedirects(resolvedUrl, {
+        headers: { 'User-Agent': 'TREK-Travel-Planner/1.0' },
+      });
+      coords = extractCoords(await pageRes.text());
+    } catch (err) {
+      if ((err as { status?: number })?.status === 403) throw err; // SSRF block — surface it
+      // Otherwise fall through to the not-found error below.
+    }
   }
 
   // Extract place name from URL path: /place/Place+Name/@...
+  let placeName: string | null = null;
   const placeMatch = resolvedUrl.match(/\/place\/([^/@]+)/);
   if (placeMatch) {
     placeName = decodeURIComponent(placeMatch[1].replace(/\+/g, ' '));
   }
 
-  if (!lat || !lng || isNaN(lat) || isNaN(lng)) {
+  if (!coords || isNaN(coords.lat) || isNaN(coords.lng)) {
     throw Object.assign(new Error('Could not extract coordinates from URL'), { status: 400 });
   }
+  const { lat, lng } = coords;
 
   // Reverse geocode to get address
   const nominatimRes = await fetch(
@@ -796,5 +1126,5 @@ export async function resolveGoogleMapsUrl(url: string): Promise<{ lat: number; 
   const name = placeName || nominatim.name || nominatim.address?.tourism || nominatim.address?.building || null;
   const address = nominatim.display_name || null;
 
-  return { lat, lng, name, address };
+  return { lat, lng, name, address, google_ftid: googleFtidFromMapsUrl(resolvedUrl) };
 }

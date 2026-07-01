@@ -1,7 +1,7 @@
 import path from 'path';
 import fs from 'fs';
 import type { Request } from 'express';
-import { db, canAccessTrip } from '../db/database';
+import { db } from '../db/database';
 import { consumeEphemeralToken } from './ephemeralTokens';
 import { verifyJwtAndLoadUser } from '../middleware/auth';
 import { TripFile } from '../types';
@@ -30,9 +30,7 @@ export const filesDir = path.join(__dirname, '../../uploads/files');
 // Helpers
 // ---------------------------------------------------------------------------
 
-export function verifyTripAccess(tripId: string | number, userId: number) {
-  return canAccessTrip(tripId, userId);
-}
+export { verifyTripAccess } from './tripAccess';
 
 export function getAllowedExtensions(): string {
   try {
@@ -48,13 +46,41 @@ const FILE_SELECT = `
   LEFT JOIN users u ON f.uploaded_by = u.id
 `;
 
-export function formatFile(file: TripFile & { trip_id?: number }) {
+export function formatFile(file: TripFile & { trip_id?: number; uploaded_by_avatar?: string | null }) {
   const tripId = file.trip_id;
   return {
     ...file,
     url: `/api/trips/${tripId}/files/${file.id}/download`,
     uploaded_by_avatar: file.uploaded_by_avatar ? `/uploads/avatars/${file.uploaded_by_avatar}` : null,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Trip-scoped link validation
+// ---------------------------------------------------------------------------
+
+/**
+ * A file, and any reservation / day-assignment / place it points at, must all
+ * live in the same trip. FILE_SELECT and getFileLinks join the reservation and
+ * return its title, so without this guard a member of trip A could aim a file
+ * (or a file_link) at trip B's reservation id and read the title back. Returns
+ * the first field that escapes `tripId`, or null when every supplied id belongs
+ * to the trip. Absent / null / zero ids are ignored (they clear the link).
+ */
+export function findForeignLinkTarget(
+  tripId: string | number,
+  opts: { reservation_id?: string | number | null; assignment_id?: string | number | null; place_id?: string | number | null }
+): 'reservation_id' | 'assignment_id' | 'place_id' | null {
+  if (opts.reservation_id && !db.prepare('SELECT 1 FROM reservations WHERE id = ? AND trip_id = ?').get(opts.reservation_id, tripId)) {
+    return 'reservation_id';
+  }
+  if (opts.place_id && !db.prepare('SELECT 1 FROM places WHERE id = ? AND trip_id = ?').get(opts.place_id, tripId)) {
+    return 'place_id';
+  }
+  if (opts.assignment_id && !db.prepare('SELECT 1 FROM day_assignments a JOIN days d ON a.day_id = d.id WHERE a.id = ? AND d.trip_id = ?').get(opts.assignment_id, tripId)) {
+    return 'assignment_id';
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -111,10 +137,6 @@ export interface FileLink {
 
 export function getFileById(id: string | number, tripId: string | number): TripFile | undefined {
   return db.prepare('SELECT * FROM trip_files WHERE id = ? AND trip_id = ?').get(id, tripId) as TripFile | undefined;
-}
-
-export function getFileByIdFull(id: string | number): TripFile {
-  return db.prepare(`${FILE_SELECT} WHERE f.id = ?`).get(id) as TripFile;
 }
 
 export function getDeletedFile(id: string | number, tripId: string | number): TripFile | undefined {

@@ -2,7 +2,7 @@ import { XMLParser, XMLValidator } from 'fast-xml-parser';
 import unzipper from 'unzipper';
 import { db, getPlaceWithTags } from '../db/database';
 import { loadTagsByPlaceIds } from './queryHelpers';
-import { checkSsrf } from '../utils/ssrfGuard';
+import { checkSsrf, safeFetchFollow, SsrfBlockedError } from '../utils/ssrfGuard';
 import { Place } from '../types';
 import {
   buildCategoryNameLookup,
@@ -13,6 +13,28 @@ import {
   resolveCategoryIdForFolder,
   type KmlImportSummary,
 } from './kmlImport';
+import { enrichImportedPlaces, type EnrichablePlace } from './placeEnrichment';
+import * as placePhotoCache from './placePhotoCache';
+
+// Reclaim a deleted place's cached marker photo if nothing else references it.
+// The cache key is the Google place_id, or — for coordinate-only places — the
+// pseudo-id embedded in the stored proxy URL (/api/maps/place-photo/{id}/bytes).
+function reclaimPhotoCache(googlePlaceId: string | null, imageUrl: string | null): void {
+  const candidates = new Set<string>();
+  if (googlePlaceId) candidates.add(googlePlaceId);
+  const m = imageUrl?.match(/^\/api\/maps\/place-photo\/(.+)\/bytes$/);
+  if (m) { try { candidates.add(decodeURIComponent(m[1])); } catch { /* malformed url */ } }
+  for (const id of candidates) {
+    try { placePhotoCache.removeIfUnreferenced(id); } catch { /* best-effort */ }
+  }
+}
+
+/** Opt-in Places-API enrichment for list imports (#886). */
+export interface ListImportOptions {
+  enrich?: boolean;
+  userId?: number;
+  lang?: string;
+}
 
 interface PlaceWithCategory extends Place {
   category_name: string | null;
@@ -101,27 +123,27 @@ export function createPlace(
     category_id?: number; price?: number; currency?: string;
     place_time?: string; end_time?: string;
     duration_minutes?: number; notes?: string; image_url?: string;
-    google_place_id?: string; osm_id?: string; website?: string; phone?: string;
+    google_place_id?: string; google_ftid?: string; osm_id?: string; website?: string; phone?: string;
     transport_mode?: string; tags?: number[];
   },
 ) {
   const {
     name, description, lat, lng, address, category_id, price, currency,
     place_time, end_time,
-    duration_minutes, notes, image_url, google_place_id, osm_id, website, phone,
+    duration_minutes, notes, image_url, google_place_id, google_ftid, osm_id, website, phone,
     transport_mode, tags = [],
   } = body;
 
   const result = db.prepare(`
     INSERT INTO places (trip_id, name, description, lat, lng, address, category_id, price, currency,
       place_time, end_time,
-      duration_minutes, notes, image_url, google_place_id, osm_id, website, phone, transport_mode)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      duration_minutes, notes, image_url, google_place_id, google_ftid, osm_id, website, phone, transport_mode)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     tripId, name, description || null, lat || null, lng || null, address || null,
     category_id || null, price || null, currency || null,
     place_time || null, end_time || null, duration_minutes || 60, notes || null, image_url || null,
-    google_place_id || null, osm_id || null, website || null, phone || null, transport_mode || 'walking',
+    google_place_id || null, google_ftid || null, osm_id || null, website || null, phone || null, transport_mode || 'walking',
   );
 
   const placeId = result.lastInsertRowid;
@@ -158,7 +180,7 @@ export function updatePlace(
     category_id?: number; price?: number; currency?: string;
     place_time?: string; end_time?: string;
     duration_minutes?: number; notes?: string; image_url?: string;
-    google_place_id?: string; osm_id?: string; website?: string; phone?: string;
+    google_place_id?: string; google_ftid?: string; osm_id?: string; website?: string; phone?: string;
     transport_mode?: string; tags?: number[];
   },
 ) {
@@ -168,7 +190,7 @@ export function updatePlace(
   const {
     name, description, lat, lng, address, category_id, price, currency,
     place_time, end_time,
-    duration_minutes, notes, image_url, google_place_id, osm_id, website, phone,
+    duration_minutes, notes, image_url, google_place_id, google_ftid, osm_id, website, phone,
     transport_mode, tags,
   } = body;
 
@@ -188,6 +210,7 @@ export function updatePlace(
       notes = ?,
       image_url = ?,
       google_place_id = ?,
+      google_ftid = ?,
       osm_id = ?,
       website = ?,
       phone = ?,
@@ -209,6 +232,7 @@ export function updatePlace(
     notes !== undefined ? notes : existingPlace.notes,
     image_url !== undefined ? image_url : existingPlace.image_url,
     google_place_id !== undefined ? google_place_id : existingPlace.google_place_id,
+    google_ftid !== undefined ? google_ftid : existingPlace.google_ftid,
     osm_id !== undefined ? osm_id : existingPlace.osm_id,
     website !== undefined ? website : existingPlace.website,
     phone !== undefined ? phone : existingPlace.phone,
@@ -234,25 +258,33 @@ export function updatePlace(
 // ---------------------------------------------------------------------------
 
 export function deletePlace(tripId: string, placeId: string): boolean {
-  const place = db.prepare('SELECT id FROM places WHERE id = ? AND trip_id = ?').get(placeId, tripId);
+  const place = db.prepare(
+    'SELECT google_place_id, image_url FROM places WHERE id = ? AND trip_id = ?'
+  ).get(placeId, tripId) as { google_place_id: string | null; image_url: string | null } | undefined;
   if (!place) return false;
   db.prepare('DELETE FROM places WHERE id = ?').run(placeId);
+  reclaimPhotoCache(place.google_place_id, place.image_url);
   return true;
 }
 
 export function deletePlacesMany(tripId: string, ids: number[]): number[] {
   if (ids.length === 0) return [];
-  const selectStmt = db.prepare('SELECT id FROM places WHERE id = ? AND trip_id = ?');
+  const selectStmt = db.prepare('SELECT google_place_id, image_url FROM places WHERE id = ? AND trip_id = ?');
   const deleteStmt = db.prepare('DELETE FROM places WHERE id = ?');
   const deleted: number[] = [];
+  const reclaimable: { google_place_id: string | null; image_url: string | null }[] = [];
   const run = db.transaction((list: number[]) => {
     for (const id of list) {
-      if (!selectStmt.get(id, tripId)) continue;
+      const row = selectStmt.get(id, tripId) as { google_place_id: string | null; image_url: string | null } | undefined;
+      if (!row) continue;
       deleteStmt.run(id);
       deleted.push(id);
+      reclaimable.push(row);
     }
   });
   run(ids);
+  // Reclaim after the transaction commits so isReferenced() sees the final place set.
+  for (const row of reclaimable) reclaimPhotoCache(row.google_place_id, row.image_url);
   return deleted;
 }
 
@@ -346,6 +378,8 @@ export interface GpxImportOptions {
   importWaypoints?: boolean;
   importRoutes?: boolean;
   importTracks?: boolean;
+  /** Source filename used to name unnamed routes/tracks (keeps multiple imports distinct). */
+  defaultName?: string;
 }
 
 export interface KmlImportOptions {
@@ -354,7 +388,7 @@ export interface KmlImportOptions {
 }
 
 export function importGpx(tripId: string, fileBuffer: Buffer, opts: GpxImportOptions = {}) {
-  const { importWaypoints = true, importRoutes = true, importTracks = true } = opts;
+  const { importWaypoints = true, importRoutes = true, importTracks = true, defaultName } = opts;
 
   const parsed = gpxParser.parse(fileBuffer.toString('utf-8'));
   const gpx = parsed?.gpx;
@@ -362,6 +396,20 @@ export function importGpx(tripId: string, fileBuffer: Buffer, opts: GpxImportOpt
 
   const str = (v: unknown) => (v != null ? String(v).trim() : null);
   const num = (v: unknown) => { const n = parseFloat(String(v)); return isNaN(n) ? null : n; };
+
+  // Routes and tracks rarely carry their own <name>. Without one they all fall back to the
+  // same generic label, so name-based dedup drops every import after the first. Derive a
+  // base from the source filename (the requested behaviour) and suffix an index so multiple
+  // geometries from one file stay distinct.
+  const rawName = str(defaultName);
+  const baseName = rawName ? rawName.replace(/\.[^.]+$/, '').trim() || rawName : null;
+  let geoSeq = 0;
+  const geoName = (explicit: string | null, fallback: string): string => {
+    if (explicit) return explicit;
+    geoSeq++;
+    const base = baseName || fallback;
+    return geoSeq === 1 ? base : `${base} ${geoSeq}`;
+  };
 
   type WaypointEntry = { name: string; lat: number; lng: number; description: string | null; routeGeometry?: string };
   const waypoints: WaypointEntry[] = [];
@@ -385,7 +433,7 @@ export function importGpx(tripId: string, fileBuffer: Buffer, opts: GpxImportOpt
       if (pts.length === 0) continue;
       const hasAllEle = pts.every(p => p.ele !== null);
       const routeGeometry = pts.map(p => hasAllEle ? [p.lat, p.lng, p.ele] : [p.lat, p.lng]);
-      waypoints.push({ lat: pts[0].lat, lng: pts[0].lng, name: str(rte.name) || 'GPX Route', description: str(rte.desc), routeGeometry: JSON.stringify(routeGeometry) });
+      waypoints.push({ lat: pts[0].lat, lng: pts[0].lng, name: geoName(str(rte.name), 'GPX Route'), description: str(rte.desc), routeGeometry: JSON.stringify(routeGeometry) });
     }
   }
 
@@ -405,7 +453,7 @@ export function importGpx(tripId: string, fileBuffer: Buffer, opts: GpxImportOpt
       const start = trackPoints[0];
       const hasAllEle = trackPoints.every(p => p.ele !== null);
       const routeGeometry = trackPoints.map(p => hasAllEle ? [p.lat, p.lng, p.ele] : [p.lat, p.lng]);
-      waypoints.push({ lat: start.lat, lng: start.lng, name: str(trk.name) || 'GPX Track', description: str(trk.desc), routeGeometry: JSON.stringify(routeGeometry) });
+      waypoints.push({ lat: start.lat, lng: start.lng, name: geoName(str(trk.name), 'GPX Track'), description: str(trk.desc), routeGeometry: JSON.stringify(routeGeometry) });
     }
   }
 
@@ -579,7 +627,66 @@ export async function importMapFile(tripId: string, fileBuffer: Buffer, filename
 // Import Google Maps list
 // ---------------------------------------------------------------------------
 
-export async function importGoogleList(tripId: string, url: string) {
+function googleMapsHexId(value: unknown): string | null {
+  if (typeof value !== 'string' && typeof value !== 'number') return null;
+  const raw = String(value).trim();
+  if (/^0x[0-9a-f]+$/i.test(raw)) return raw.toLowerCase();
+  if (!/^-?\d+$/.test(raw)) return null;
+  try {
+    const parsed = BigInt(raw);
+    const unsigned = parsed < 0n ? (1n << 64n) + parsed : parsed;
+    return `0x${unsigned.toString(16)}`;
+  } catch {
+    return null;
+  }
+}
+
+function googleMapsFeatureIdFromItem(item: unknown): string | null {
+  if (!Array.isArray(item)) return null;
+  const candidates = [
+    Array.isArray(item[1]) ? item[1][6] : null,
+    Array.isArray(item[7]) ? item[7][1] : null,
+  ];
+
+  for (const ids of candidates) {
+    if (!Array.isArray(ids) || ids.length < 2) continue;
+    const first = googleMapsHexId(ids[0]);
+    const second = googleMapsHexId(ids[1]);
+    if (first && second) return `${first}:${second}`;
+  }
+
+  return null;
+}
+
+function findDuplicatePlace(
+  tripId: string,
+  place: { name: string | null | undefined; lat: number | null; lng: number | null },
+): { id: number; google_ftid: string | null } | null {
+  const normalizedName = place.name?.trim().toLowerCase();
+  if (normalizedName) {
+    const duplicate = db.prepare(`
+      SELECT id, google_ftid FROM places
+      WHERE trip_id = ? AND lower(trim(name)) = ?
+      ORDER BY id ASC
+      LIMIT 1
+    `).get(tripId, normalizedName) as { id: number; google_ftid: string | null } | undefined;
+    if (duplicate) return duplicate;
+  }
+  if (place.lat != null && place.lng != null) {
+    return db.prepare(`
+      SELECT id, google_ftid FROM places
+      WHERE trip_id = ?
+        AND lat IS NOT NULL AND lng IS NOT NULL
+        AND abs(lat - ?) <= ?
+        AND abs(lng - ?) <= ?
+      ORDER BY id ASC
+      LIMIT 1
+    `).get(tripId, place.lat, COORD_DEDUP_TOLERANCE, place.lng, COORD_DEDUP_TOLERANCE) as { id: number; google_ftid: string | null } | undefined || null;
+  }
+  return null;
+}
+
+export async function importGoogleList(tripId: string, url: string, opts?: ListImportOptions) {
   let listId: string | null = null;
   let resolvedUrl = url;
 
@@ -587,10 +694,18 @@ export async function importGoogleList(tripId: string, url: string) {
   const ssrf = await checkSsrf(url);
   if (!ssrf.allowed) return { error: 'URL is not allowed', status: 400 };
 
-  // Follow redirects for short URLs (maps.app.goo.gl, goo.gl)
+  // Follow redirects for short URLs (maps.app.goo.gl, goo.gl). Redirects are
+  // followed manually so every hop is re-checked against the SSRF guard — a
+  // short link that 302s to an internal IP is blocked even though the initial
+  // host is public.
   if (url.includes('goo.gl') || url.includes('maps.app')) {
-    const redirectRes = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(10000) });
-    resolvedUrl = redirectRes.url;
+    try {
+      const redirectRes = await safeFetchFollow(url, { signal: AbortSignal.timeout(10000) });
+      resolvedUrl = redirectRes.url;
+    } catch (err) {
+      if (err instanceof SsrfBlockedError) return { error: 'URL is not allowed', status: 400 };
+      throw err;
+    }
   }
 
   // Pattern: /placelists/list/{ID}
@@ -604,6 +719,11 @@ export async function importGoogleList(tripId: string, url: string) {
   }
 
   if (!listId) {
+    // A single-place share link (…/maps/place/…) carries no list id — point the user at
+    // the place search box instead of a cryptic "could not extract list ID" (#1304).
+    if (resolvedUrl.includes('/maps/place/')) {
+      return { error: 'That link points to a single place, not a list. To add it, paste the link into the place search box instead of using the list import.', status: 400 };
+    }
     return { error: 'Could not extract list ID from URL. Please use a shared Google Maps list link.', status: 400 };
   }
 
@@ -635,7 +755,7 @@ export async function importGoogleList(tripId: string, url: string) {
   }
 
   // Parse place data from items
-  const places: { name: string; lat: number; lng: number; notes: string | null }[] = [];
+  const places: { name: string; lat: number; lng: number; notes: string | null; googleFtid: string | null }[] = [];
   for (const item of items) {
     const coords = item?.[1]?.[5];
     const lat = coords?.[2];
@@ -644,7 +764,7 @@ export async function importGoogleList(tripId: string, url: string) {
     const note = item?.[3] || null;
 
     if (name && typeof lat === 'number' && typeof lng === 'number' && !isNaN(lat) && !isNaN(lng)) {
-      places.push({ name, lat, lng, notes: note || null });
+      places.push({ name, lat, lng, notes: note || null, googleFtid: googleMapsFeatureIdFromItem(item) });
     }
   }
 
@@ -654,24 +774,33 @@ export async function importGoogleList(tripId: string, url: string) {
 
   const dedup = buildDedupSet(tripId);
   const insertStmt = db.prepare(`
-    INSERT INTO places (trip_id, name, lat, lng, notes, transport_mode)
-    VALUES (?, ?, ?, ?, ?, 'walking')
+    INSERT INTO places (trip_id, name, lat, lng, notes, google_ftid, transport_mode)
+    VALUES (?, ?, ?, ?, ?, ?, 'walking')
   `);
+  const updateGoogleFtidStmt = db.prepare('UPDATE places SET google_ftid = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?');
   const created: any[] = [];
   let skipped = 0;
   const insertAll = db.transaction(() => {
     for (const p of places) {
       if (isPlaceDuplicate({ name: p.name, lat: p.lat, lng: p.lng }, dedup)) {
+        const duplicate = findDuplicatePlace(tripId, p);
+        if (duplicate && !duplicate.google_ftid && p.googleFtid) {
+          updateGoogleFtidStmt.run(p.googleFtid, duplicate.id);
+        }
         skipped++;
         continue;
       }
-      const result = insertStmt.run(tripId, p.name, p.lat, p.lng, p.notes);
+      const result = insertStmt.run(tripId, p.name, p.lat, p.lng, p.notes, p.googleFtid);
       const place = getPlaceWithTags(Number(result.lastInsertRowid));
       created.push(place);
       trackInsertedInDedupSet({ name: p.name, lat: p.lat, lng: p.lng }, dedup);
     }
   });
   insertAll();
+
+  if (opts?.enrich && opts.userId && created.length) {
+    void enrichImportedPlaces(tripId, opts.userId, created as EnrichablePlace[], opts.lang);
+  }
 
   return { places: created, listName, skipped };
 }
@@ -683,7 +812,8 @@ export async function importGoogleList(tripId: string, url: string) {
 export async function importNaverList(
   tripId: string,
   url: string,
-): Promise<{ places: any[]; listName: string } | { error: string; status: number }> {
+  opts?: ListImportOptions,
+): Promise<{ places: any[]; listName: string; skipped: number } | { error: string; status: number }> {
   let resolvedUrl = url;
   const limit = 20;
 
@@ -692,11 +822,18 @@ export async function importNaverList(
   if (!ssrf.allowed) return { error: 'URL is not allowed', status: 400 };
 
   // Resolve naver.me short links to the canonical map.naver.com folder URL.
+  // Redirects are followed manually so each hop is re-validated against the
+  // SSRF guard (a short link could otherwise 302 to an internal address).
   let parsedUrl: URL;
   try { parsedUrl = new URL(url); } catch { return { error: 'Invalid URL', status: 400 }; }
   if (parsedUrl.hostname === 'naver.me') {
-    const redirectRes = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(10000) });
-    resolvedUrl = redirectRes.url;
+    try {
+      const redirectRes = await safeFetchFollow(url, { signal: AbortSignal.timeout(10000) });
+      resolvedUrl = redirectRes.url;
+    } catch (err) {
+      if (err instanceof SsrfBlockedError) return { error: 'URL is not allowed', status: 400 };
+      throw err;
+    }
   }
 
   const folderMatch = resolvedUrl.match(/favorite\/myPlace\/folder\/([A-Za-z0-9_-]+)/i);
@@ -794,6 +931,10 @@ export async function importNaverList(
     }
   });
   insertAll();
+
+  if (opts?.enrich && opts.userId && created.length) {
+    void enrichImportedPlaces(tripId, opts.userId, created as EnrichablePlace[], opts.lang);
+  }
 
   return { places: created, listName, skipped };
 }

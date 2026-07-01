@@ -34,7 +34,8 @@ import { createTables } from '../../../src/db/schema';
 import { runMigrations } from '../../../src/db/migrations';
 import { resetTestDb } from '../../helpers/test-db';
 import { createUser, createTrip, createReservation, createPlace, createDay, createDayAssignment, createDayNote } from '../../helpers/factories';
-import { exportICS, generateDays } from '../../../src/services/tripService';
+import { exportICS, generateDays, deleteOldCover, updateTrip } from '../../../src/services/tripService';
+import fs from 'fs';
 
 beforeAll(() => {
   createTables(testDb);
@@ -242,6 +243,33 @@ describe('generateDays', () => {
     const nums = daysAfter.map(d => d.day_number).sort((a, b) => a - b);
     expect(nums).toEqual([1, 2, 3, 4, 5]);
   });
+
+  it('TRIP-SVC-017: switching a dateless trip to a shorter dated range drops empty leftover days but keeps ones with content (#1083)', () => {
+    const { user } = createUser(testDb);
+    // A 7-day trip, then cleared to dateless placeholders (day_count = 7).
+    const trip = createTrip(testDb, user.id, { start_date: '2025-12-01', end_date: '2025-12-07' });
+    generateDays(trip.id, null, null);
+    const dateless = getDays(trip.id);
+    expect(dateless).toHaveLength(7);
+    expect(dateless.every(d => d.date === null)).toBe(true);
+
+    // Give the LAST dateless day real content so it must be preserved.
+    const place = createPlace(testDb, trip.id);
+    const assignment = createDayAssignment(testDb, dateless[6].id, place.id);
+
+    // Now set an explicit 2-day range. The first two dateless days are reused for
+    // the dates; the four empty leftovers must be removed, the one with content kept.
+    generateDays(trip.id, '2026-01-10', '2026-01-11');
+
+    const daysAfter = getDays(trip.id);
+    const dated = daysAfter.filter(d => d.date !== null);
+    const stillDateless = daysAfter.filter(d => d.date === null);
+    expect(dated.map(d => d.date)).toEqual(['2026-01-10', '2026-01-11']);
+    // day_count is COUNT(*) FROM days: 2 dated + 1 content-bearing dateless = 3 (not the stale 7)
+    expect(daysAfter).toHaveLength(3);
+    expect(stillDateless).toHaveLength(1);
+    expect(getAssignments(stillDateless[0].id)[0].id).toBe(assignment.id);
+  });
 });
 
 describe('exportICS', () => {
@@ -368,5 +396,114 @@ describe('exportICS', () => {
     const { ics } = exportICS(trip.id);
 
     expect(ics).toContain('DTEND:20250602T160000');
+  });
+
+  it('TRIP-SVC-010: flight with endpoint times but no reservation_time is included', () => {
+    const { user } = createUser(testDb);
+    const trip = createTrip(testDb, user.id, { title: 'Paris Trip' });
+    const reservation = createReservation(testDb, trip.id, {
+      title: 'CDG → JFK',
+      type: 'flight',
+    });
+    // Confirmed flights store times per endpoint, never as reservation_time.
+    testDb.prepare('UPDATE reservations SET reservation_time=NULL, reservation_end_time=NULL WHERE id=?').run(reservation.id);
+    const insertEp = testDb.prepare(
+      'INSERT INTO reservation_endpoints (reservation_id, role, sequence, name, code, lat, lng, timezone, local_time, local_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    );
+    insertEp.run(reservation.id, 'from', 0, 'Paris CDG', 'CDG', 49.0, 2.5, 'Europe/Paris', '09:00', '2025-06-02');
+    insertEp.run(reservation.id, 'to', 1, 'New York JFK', 'JFK', 40.6, -73.8, 'America/New_York', '12:00', '2025-06-02');
+
+    const { ics } = exportICS(trip.id);
+
+    expect(ics).toContain('SUMMARY:CDG → JFK');
+    expect(ics).toContain('DTSTART:20250602T090000');
+    expect(ics).toContain('DTEND:20250602T120000');
+    expect(ics).toContain('Route: CDG → JFK');
+  });
+
+  it('TRIP-SVC-011: flight endpoint with no local_date is skipped (relative Day-N trips)', () => {
+    const { user } = createUser(testDb);
+    const trip = createTrip(testDb, user.id, { title: 'Relative Trip' });
+    const reservation = createReservation(testDb, trip.id, {
+      title: 'Timeless Flight',
+      type: 'flight',
+    });
+    testDb.prepare('UPDATE reservations SET reservation_time=NULL WHERE id=?').run(reservation.id);
+    testDb.prepare(
+      'INSERT INTO reservation_endpoints (reservation_id, role, sequence, name, code, lat, lng, timezone, local_time, local_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    ).run(reservation.id, 'from', 0, 'Origin', 'AAA', 1.0, 1.0, null, '09:00', null);
+
+    const { ics } = exportICS(trip.id);
+
+    expect(ics).not.toContain('SUMMARY:Timeless Flight');
+  });
+});
+
+// ── deleteOldCover — path containment ──────────────────────────────────────────
+
+describe('deleteOldCover', () => {
+  it('TRIP-SVC-COVER-001: never unlinks outside uploads/covers for a crafted cover_image', () => {
+    const existsSpy = vi.spyOn(fs, 'existsSync').mockReturnValue(true);
+    const unlinkSpy = vi.spyOn(fs, 'unlinkSync').mockImplementation(() => {});
+    try {
+      // Attacker-controlled values aimed at auth-gated sibling upload dirs.
+      deleteOldCover('/uploads/files/victim.pdf');
+      deleteOldCover('/uploads/covers/../files/secret.pdf');
+      deleteOldCover('/uploads/avatars/someone.png');
+
+      for (const call of unlinkSpy.mock.calls) {
+        const target = String(call[0]);
+        expect(target).toMatch(/[\\/]uploads[\\/]covers[\\/]/); // stays in covers
+        expect(target).not.toMatch(/[\\/]files[\\/]/);
+        expect(target).not.toMatch(/[\\/]avatars[\\/]/);
+      }
+    } finally {
+      existsSpy.mockRestore();
+      unlinkSpy.mockRestore();
+    }
+  });
+
+  it('TRIP-SVC-COVER-002: deletes a legitimate cover file', () => {
+    const existsSpy = vi.spyOn(fs, 'existsSync').mockReturnValue(true);
+    const unlinkSpy = vi.spyOn(fs, 'unlinkSync').mockImplementation(() => {});
+    try {
+      deleteOldCover('/uploads/covers/abc123.jpg');
+      expect(unlinkSpy).toHaveBeenCalledTimes(1);
+      expect(String(unlinkSpy.mock.calls[0][0])).toMatch(/[\\/]covers[\\/]abc123\.jpg$/);
+    } finally {
+      existsSpy.mockRestore();
+      unlinkSpy.mockRestore();
+    }
+  });
+});
+
+describe('resyncReservationDays (#1288)', () => {
+  const dayFor = (tripId: number, date: string) =>
+    (testDb.prepare('SELECT id FROM days WHERE trip_id = ? AND date = ?').get(tripId, date) as { id: number }).id;
+  const insertDatedReservation = (tripId: number, dayId: number, time: string) =>
+    Number(testDb.prepare(
+      "INSERT INTO reservations (trip_id, day_id, title, reservation_time, type, status) VALUES (?, ?, 'Dinner', ?, 'restaurant', 'pending')",
+    ).run(tripId, dayId, time).lastInsertRowid);
+
+  it('TRIP-SVC-018: changing the start date re-anchors a dated reservation to the day matching its time', () => {
+    const { user } = createUser(testDb);
+    const trip = createTrip(testDb, user.id, { start_date: '2025-06-01', end_date: '2025-06-05' });
+    const resId = insertDatedReservation(trip.id, dayFor(trip.id, '2025-06-02'), '2025-06-02T19:00:00');
+    // Shift the whole range one day forward (days become 2025-06-02..06).
+    updateTrip(trip.id, user.id, { start_date: '2025-06-02', end_date: '2025-06-06' }, 'user');
+    const res = testDb.prepare('SELECT day_id FROM reservations WHERE id = ?').get(resId) as { day_id: number };
+    // The booking stays on its absolute date (2025-06-02) instead of shifting with its old day row.
+    expect(res.day_id).toBe(dayFor(trip.id, '2025-06-02'));
+  });
+
+  it('TRIP-SVC-019: a reservation whose date falls outside the new range keeps its day_id (not nulled)', () => {
+    const { user } = createUser(testDb);
+    const trip = createTrip(testDb, user.id, { start_date: '2025-06-01', end_date: '2025-06-05' });
+    const origDayId = dayFor(trip.id, '2025-06-02');
+    const resId = insertDatedReservation(trip.id, origDayId, '2025-06-02T19:00:00');
+    // Shift far forward so 2025-06-02 is no longer covered by any day.
+    updateTrip(trip.id, user.id, { start_date: '2025-06-10', end_date: '2025-06-14' }, 'user');
+    const res = testDb.prepare('SELECT day_id FROM reservations WHERE id = ?').get(resId) as { day_id: number };
+    expect(res.day_id).toBe(origDayId);
   });
 });

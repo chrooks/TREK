@@ -1,12 +1,13 @@
 import path from 'path';
 import fs from 'fs';
-import { db, canAccessTrip, isOwner } from '../db/database';
+import { db, isOwner } from '../db/database';
 import { Trip, User } from '../types';
 import { listDays, listAccommodations } from './dayService';
 import { listBudgetItems } from './budgetService';
 import { listItems as listPackingItems } from './packingService';
-import { listReservations } from './reservationService';
+import { listReservations, loadEndpointsByTrip, resyncReservationDays } from './reservationService';
 import { listNotes as listCollabNotes } from './collabService';
+import { shiftOwnerEntriesForTripWindow } from './vacayService';
 
 export const MS_PER_DAY = 86400000;
 export const MAX_TRIP_DAYS = 365;
@@ -24,10 +25,7 @@ export const TRIP_SELECT = `
 
 // ── Access helpers ────────────────────────────────────────────────────────
 
-export function verifyTripAccess(tripId: string | number, userId: number) {
-  return canAccessTrip(tripId, userId);
-}
-
+export { verifyTripAccess } from './tripAccess';
 export { isOwner };
 
 // ── Day generation ────────────────────────────────────────────────────────
@@ -124,12 +122,26 @@ export function generateDays(tripId: number | bigint | string, startDate: string
     del.run(dated[i].id);
   }
 
-  // Any remaining unused dateless days: keep as dateless, just renumber.
+  // Any remaining unused dateless days: drop the empty placeholders so day_count
+  // reflects the dated range, but keep ones that still hold content (assignments,
+  // notes, accommodations) — mirrors the dateless-path trimming above (#1083).
   // Base must be max(targetDates.length, dated.length) to avoid colliding with
   // positives already assigned by the main loop or the overflow loop above.
+  const isEmptyDay = db.prepare(
+    `SELECT NOT EXISTS (SELECT 1 FROM day_assignments da WHERE da.day_id = @id)
+          AND NOT EXISTS (SELECT 1 FROM day_notes dn WHERE dn.day_id = @id)
+          AND NOT EXISTS (SELECT 1 FROM day_accommodations dac WHERE dac.start_day_id = @id OR dac.end_day_id = @id) AS empty`
+  );
   const maxAssigned = Math.max(targetDates.length, dated.length);
+  let keptDateless = 0;
   for (let i = datelessIdx; i < dateless.length; i++) {
-    setDayNumber.run(maxAssigned + (i - datelessIdx) + 1, dateless[i].id);
+    const empty = (isEmptyDay.get({ id: dateless[i].id }) as { empty: number }).empty;
+    if (empty) {
+      del.run(dateless[i].id);
+    } else {
+      setDayNumber.run(maxAssigned + keptDateless + 1, dateless[i].id);
+      keptDateless++;
+    }
   }
 
   // Final renumber to compact and eliminate any gaps/negatives
@@ -188,7 +200,7 @@ export function getTrip(tripId: string | number, userId: number) {
     ${TRIP_SELECT}
     LEFT JOIN trip_members m ON m.trip_id = t.id AND m.user_id = :userId
     WHERE t.id = :tripId AND (t.user_id = :userId OR m.user_id IS NOT NULL)
-  `).get({ userId, tripId });
+  `).get({ userId, tripId }) as Trip | undefined;
 }
 
 interface UpdateTripData {
@@ -240,9 +252,16 @@ export function updateTrip(tripId: string | number, userId: number, data: Update
     WHERE id=?
   `).run(newTitle, newDesc, newStart || null, newEnd || null, newCurrency, newArchived, newCover, newReminder, tripId);
 
+  if (trip.start_date && trip.end_date && newStart && newStart !== trip.start_date)
+    shiftOwnerEntriesForTripWindow(trip.user_id, trip.start_date, trip.end_date, newStart);
+
   const dayCount = data.day_count ? Math.min(Math.max(Number(data.day_count) || 7, 1), MAX_TRIP_DAYS) : undefined;
-  if (newStart !== trip.start_date || newEnd !== trip.end_date || dayCount)
+  if (newStart !== trip.start_date || newEnd !== trip.end_date || dayCount) {
     generateDays(tripId, newStart || null, newEnd || null, undefined, dayCount);
+    // generateDays re-dates day rows positionally; re-anchor dated bookings to the day
+    // matching their absolute reservation_time so they don't shift with it (#1288).
+    resyncReservationDays(tripId);
+  }
 
   const changes: Record<string, unknown> = {};
   if (title && title !== trip.title) changes.title = title;
@@ -303,10 +322,12 @@ export function deleteTrip(tripId: string | number, userId: number, userRole: st
 
 export function deleteOldCover(coverImage: string | null | undefined) {
   if (!coverImage) return;
-  const oldPath = path.join(__dirname, '../../', coverImage.replace(/^\//, ''));
-  const resolvedPath = path.resolve(oldPath);
-  const uploadsDir = path.resolve(__dirname, '../../uploads');
-  if (resolvedPath.startsWith(uploadsDir) && fs.existsSync(resolvedPath)) {
+  // cover_image is client-supplied, so treat it as untrusted: covers live in
+  // uploads/covers as a flat filename — use basename() and confine the unlink
+  // to that directory.
+  const coversDir = path.resolve(__dirname, '../../uploads/covers');
+  const resolvedPath = path.resolve(path.join(coversDir, path.basename(coverImage)));
+  if (resolvedPath.startsWith(coversDir + path.sep) && fs.existsSync(resolvedPath)) {
     fs.unlinkSync(resolvedPath);
   }
 }
@@ -499,30 +520,75 @@ export function exportICS(tripId: string | number): { ics: string; filename: str
     }
   }
 
+  // Transport/flight reservations carry no top-level reservation_time; their
+  // times live per endpoint (local_date + local_time) in reservation_endpoints.
+  const endpointsMap = loadEndpointsByTrip(tripId);
+  const isDate = (s: string | null | undefined) => !!s && /^\d{4}-\d{2}-\d{2}$/.test(s);
+  const isTime = (s: string | null | undefined) => !!s && /^\d{2}:\d{2}/.test(s);
+
+  // Build the DTSTART/DTEND lines for a reservation, or null when it has no
+  // calendar-placeable time. Hotels/restaurants use reservation_time; flights
+  // fall back to their first/last endpoint.
+  const buildReservationTimeLines = (r: any): string | null => {
+    if (r.reservation_time) {
+      const datePart = r.reservation_time.includes('T') ? r.reservation_time.split('T')[0] : r.reservation_time;
+      if (!isDate(datePart)) return null; // time-only (relative "Day N" trips)
+      if (r.reservation_time.includes('T')) {
+        let out = `DTSTART:${fmtDateTime(r.reservation_time)}\r\n`;
+        if (r.reservation_end_time) {
+          const endDt = fmtDateTime(r.reservation_end_time, r.reservation_time);
+          if (endDt.length >= 15) out += `DTEND:${endDt}\r\n`;
+        }
+        return out;
+      }
+      return `DTSTART;VALUE=DATE:${fmtDate(r.reservation_time)}\r\n`;
+    }
+
+    const eps = endpointsMap.get(r.id);
+    if (!eps || eps.length === 0) return null;
+    const ordered = [...eps].sort((a, b) => a.sequence - b.sequence);
+    const first = ordered[0];
+    const last = ordered[ordered.length - 1];
+    if (!isDate(first.local_date)) return null;
+    if (isTime(first.local_time)) {
+      let out = `DTSTART:${fmtDateTime(`${first.local_date}T${first.local_time}`)}\r\n`;
+      if (last !== first && isDate(last.local_date) && isTime(last.local_time)) {
+        out += `DTEND:${fmtDateTime(`${last.local_date}T${last.local_time}`)}\r\n`;
+      }
+      return out;
+    }
+    return `DTSTART;VALUE=DATE:${fmtDate(first.local_date)}\r\n`;
+  };
+
   // Reservations as events
   for (const r of reservations) {
-    if (!r.reservation_time) continue;
-    const hasTime = r.reservation_time.includes('T');
+    const timeLines = buildReservationTimeLines(r);
+    if (!timeLines) continue;
     const meta = r.metadata ? (typeof r.metadata === 'string' ? JSON.parse(r.metadata) : r.metadata) : {};
 
     ics += `BEGIN:VEVENT\r\nUID:${uid(r.id, 'res')}\r\nDTSTAMP:${now}\r\n`;
-    if (hasTime) {
-      ics += `DTSTART:${fmtDateTime(r.reservation_time)}\r\n`;
-      if (r.reservation_end_time) {
-        const endDt = fmtDateTime(r.reservation_end_time, r.reservation_time);
-        if (endDt.length >= 15) ics += `DTEND:${endDt}\r\n`;
-      }
-    } else {
-      ics += `DTSTART;VALUE=DATE:${fmtDate(r.reservation_time)}\r\n`;
-    }
+    ics += timeLines;
     ics += `SUMMARY:${esc(r.title)}\r\n`;
 
     let desc = r.type ? `Type: ${r.type}` : '';
     if (r.confirmation_number) desc += `\nConfirmation: ${r.confirmation_number}`;
     if (meta.airline) desc += `\nAirline: ${meta.airline}`;
     if (meta.flight_number) desc += `\nFlight: ${meta.flight_number}`;
-    if (meta.departure_airport) desc += `\nFrom: ${meta.departure_airport}`;
-    if (meta.arrival_airport) desc += `\nTo: ${meta.arrival_airport}`;
+    if (Array.isArray(meta.legs) && meta.legs.length > 1) {
+      // Multi-leg flight: show the whole route (FRA → BER → HND) on one event.
+      const stops = [meta.legs[0]?.from, ...meta.legs.map((l: { to?: string }) => l.to)].filter(Boolean);
+      if (stops.length) desc += `\nRoute: ${stops.join(' → ')}`;
+    } else if (meta.departure_airport || meta.arrival_airport) {
+      if (meta.departure_airport) desc += `\nFrom: ${meta.departure_airport}`;
+      if (meta.arrival_airport) desc += `\nTo: ${meta.arrival_airport}`;
+    } else {
+      // Endpoint-based transport without route metadata: derive it from endpoints.
+      const eps = endpointsMap.get(r.id);
+      if (eps && eps.length > 1) {
+        const stops = [...eps].sort((a, b) => a.sequence - b.sequence).map(e => e.code || e.name).filter(Boolean);
+        if (stops.length > 1) desc += `\nRoute: ${stops.join(' → ')}`;
+      }
+    }
     if (meta.train_number) desc += `\nTrain: ${meta.train_number}`;
     if (r.notes) desc += `\n${r.notes}`;
     if (desc) ics += `DESCRIPTION:${esc(desc)}\r\n`;
@@ -570,14 +636,14 @@ export function copyTripById(sourceTripId: string | number, newOwnerId: number, 
     const insertPlace = db.prepare(`
       INSERT INTO places (trip_id, name, description, lat, lng, address, category_id, price, currency,
         reservation_status, reservation_notes, reservation_datetime, place_time, end_time,
-        duration_minutes, notes, image_url, google_place_id, website, phone, transport_mode, osm_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        duration_minutes, notes, image_url, google_place_id, google_ftid, website, phone, transport_mode, osm_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     for (const p of oldPlaces) {
       const r = insertPlace.run(newTripId, p.name, p.description, p.lat, p.lng, p.address, p.category_id,
         p.price, p.currency, p.reservation_status, p.reservation_notes, p.reservation_datetime,
         p.place_time, p.end_time, p.duration_minutes, p.notes, p.image_url, p.google_place_id,
-        p.website, p.phone, p.transport_mode, p.osm_id);
+        p.google_ftid, p.website, p.phone, p.transport_mode, p.osm_id);
       placeMap.set(p.id, r.lastInsertRowid);
     }
 
@@ -627,19 +693,22 @@ export function copyTripById(sourceTripId: string | number, newOwnerId: number, 
 
     const oldReservations = db.prepare('SELECT * FROM reservations WHERE trip_id = ?').all(sourceTripId) as any[];
     const insertReservation = db.prepare(`
-      INSERT INTO reservations (trip_id, day_id, place_id, assignment_id, accommodation_id, title, reservation_time, reservation_end_time,
-        location, confirmation_number, notes, status, type, metadata, day_plan_position)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO reservations (trip_id, day_id, end_day_id, place_id, assignment_id, accommodation_id, title, reservation_time, reservation_end_time,
+        location, confirmation_number, notes, status, type, metadata, day_plan_position, needs_review)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     for (const r of oldReservations) {
       insertReservation.run(newTripId,
         r.day_id ? (dayMap.get(r.day_id) ?? null) : null,
+        // end_day_id is a day reference too (multi-day transport) — remap it like
+        // day_id, otherwise the duplicated trip loses the reservation's end-day link.
+        r.end_day_id ? (dayMap.get(r.end_day_id) ?? null) : null,
         r.place_id ? (placeMap.get(r.place_id) ?? null) : null,
         r.assignment_id ? (assignmentMap.get(r.assignment_id) ?? null) : null,
         r.accommodation_id ? (accomMap.get(r.accommodation_id) ?? null) : null,
         r.title, r.reservation_time, r.reservation_end_time,
         r.location, r.confirmation_number, r.notes, r.status, r.type,
-        r.metadata, r.day_plan_position);
+        r.metadata, r.day_plan_position, r.needs_review ?? 0);
     }
 
     const oldBudget = db.prepare('SELECT * FROM budget_items WHERE trip_id = ?').all(sourceTripId) as any[];

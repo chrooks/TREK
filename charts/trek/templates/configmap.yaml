@@ -28,6 +28,12 @@ data:
   {{- if .Values.env.COOKIE_SECURE }}
   COOKIE_SECURE: {{ .Values.env.COOKIE_SECURE | quote }}
   {{- end }}
+  {{- if .Values.env.SESSION_DURATION }}
+  SESSION_DURATION: {{ .Values.env.SESSION_DURATION | quote }}
+  {{- end }}
+  {{- if .Values.env.SESSION_DURATION_REMEMBER }}
+  SESSION_DURATION_REMEMBER: {{ .Values.env.SESSION_DURATION_REMEMBER | quote }}
+  {{- end }}
   {{- if .Values.env.TRUST_PROXY }}
   TRUST_PROXY: {{ .Values.env.TRUST_PROXY | quote }}
   {{- end }}
@@ -63,4 +69,10 @@ data:
   {{- end }}
   {{- if .Values.env.MCP_RATE_LIMIT }}
   MCP_RATE_LIMIT: {{ .Values.env.MCP_RATE_LIMIT | quote }}
+  {{- end }}
+  {{- if .Values.env.OVERPASS_URL }}
+  OVERPASS_URL: {{ .Values.env.OVERPASS_URL | quote }}
+  {{- end }}
+  {{- if .Values.env.OVERPASS_TIMEOUT_MS }}
+  OVERPASS_TIMEOUT_MS: {{ .Values.env.OVERPASS_TIMEOUT_MS | quote }}
   {{- end }}

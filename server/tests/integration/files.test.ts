@@ -10,6 +10,7 @@
 import { describe, it, expect, vi, beforeAll, beforeEach, afterAll } from 'vitest';
 import request from 'supertest';
 import type { Application } from 'express';
+import type { INestApplication } from '@nestjs/common';
 import path from 'path';
 import fs from 'fs';
 
@@ -42,26 +43,33 @@ vi.mock('../../src/config', () => ({
   JWT_SECRET: 'test-jwt-secret-for-trek-testing-only',
   ENCRYPTION_KEY: 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6a7b8c9d0e1f2a3b4c5d6a7b8c9d0e1f2',
   updateJwtSecret: () => {},
+  SESSION_DURATION: '24h',
+  SESSION_DURATION_MS: 86400000,
+  SESSION_DURATION_SECONDS: 86400,
+  DEFAULT_LANGUAGE: 'en',
 }));
+vi.mock('../../src/websocket', () => ({ broadcast: vi.fn(), broadcastToUser: vi.fn() }));
 
-import { createApp } from '../../src/app';
+import { buildApp } from '../../src/bootstrap';
 import { createTables } from '../../src/db/schema';
 import { runMigrations } from '../../src/db/migrations';
-import { resetTestDb } from '../helpers/test-db';
-import { createUser, createTrip, createReservation, addTripMember } from '../helpers/factories';
+import { resetTestDb, resetRateLimits } from '../helpers/test-db';
+import { createUser, createTrip, createReservation, createPlace, addTripMember } from '../helpers/factories';
 import { authCookie, generateToken } from '../helpers/auth';
-import { loginAttempts, mfaAttempts } from '../../src/routes/auth';
 
-const app: Application = createApp();
+let nestApp: INestApplication;
+let app: Application;
 const FIXTURE_PDF = path.join(__dirname, '../fixtures/test.pdf');
 const FIXTURE_IMG = path.join(__dirname, '../fixtures/small-image.jpg');
 
 // Ensure uploads/files dir exists
 const uploadsDir = path.join(__dirname, '../../uploads/files');
 
-beforeAll(() => {
+beforeAll(async () => {
   createTables(testDb);
   runMigrations(testDb);
+  nestApp = await buildApp();
+  app = nestApp.getHttpAdapter().getInstance();
   if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
   // Seed allowed_file_types to include common types (wildcard)
   testDb.prepare("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('allowed_file_types', '*')").run();
@@ -69,13 +77,13 @@ beforeAll(() => {
 
 beforeEach(() => {
   resetTestDb(testDb);
-  loginAttempts.clear();
-  mfaAttempts.clear();
+  resetRateLimits(nestApp);
   // Re-seed allowed_file_types after reset
   testDb.prepare("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('allowed_file_types', '*')").run();
 });
 
-afterAll(() => {
+afterAll(async () => {
+  await nestApp.close();
   testDb.close();
   fs.rmSync(uploadsDir, { recursive: true, force: true });
 });
@@ -346,6 +354,117 @@ describe('File links', () => {
       .delete(`/api/trips/${trip.id}/files/${fileId}/link/${linkId}`)
       .set('Cookie', authCookie(user.id));
     expect(unlink.status).toBe(200);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cross-trip link isolation (GHSA — reservation title disclosure)
+//
+// A file may only point at reservations / assignments / places from its own
+// trip. The reservation JOIN returns the reservation title, so a member of one
+// trip linking a file to another private trip's reservation id used to read the
+// foreign title back. Every write path (link, upload, update) must reject it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('Cross-trip link isolation', () => {
+  it('SEC-FILE-LINK-001 — linking a file to a reservation from another trip is rejected (no title leak)', async () => {
+    const { user: attacker } = createUser(testDb);
+    const { user: victim } = createUser(testDb);
+    const attackerTrip = createTrip(testDb, attacker.id, { title: 'Attacker Trip' });
+    const victimTrip = createTrip(testDb, victim.id, { title: 'Victim Trip' });
+    const victimReservation = createReservation(testDb, victimTrip.id, { title: 'Victim Secret Flight', type: 'flight' });
+    const upload = await uploadFile(attackerTrip.id, attacker.id, FIXTURE_PDF);
+    const fileId = upload.body.file.id;
+
+    const link = await request(app)
+      .post(`/api/trips/${attackerTrip.id}/files/${fileId}/link`)
+      .set('Cookie', authCookie(attacker.id))
+      .send({ reservation_id: victimReservation.id });
+    expect(link.status).toBe(400);
+
+    // Nothing was stored, so the title cannot leak back through the links list.
+    const links = await request(app)
+      .get(`/api/trips/${attackerTrip.id}/files/${fileId}/links`)
+      .set('Cookie', authCookie(attacker.id));
+    expect(links.status).toBe(200);
+    expect(JSON.stringify(links.body)).not.toContain('Victim Secret Flight');
+    expect((links.body.links as any[]).some((l) => l.reservation_id === victimReservation.id)).toBe(false);
+  });
+
+  it('SEC-FILE-LINK-002 — uploading a file with a foreign reservation_id is rejected (no title leak)', async () => {
+    const { user: attacker } = createUser(testDb);
+    const { user: victim } = createUser(testDb);
+    const attackerTrip = createTrip(testDb, attacker.id);
+    const victimTrip = createTrip(testDb, victim.id);
+    const victimReservation = createReservation(testDb, victimTrip.id, { title: 'Victim Secret Flight', type: 'flight' });
+
+    const res = await request(app)
+      .post(`/api/trips/${attackerTrip.id}/files`)
+      .set('Cookie', authCookie(attacker.id))
+      .field('reservation_id', String(victimReservation.id))
+      .attach('file', FIXTURE_PDF);
+    expect(res.status).toBe(400);
+    expect(JSON.stringify(res.body)).not.toContain('Victim Secret Flight');
+  });
+
+  it('SEC-FILE-LINK-003 — updating a file with a foreign reservation_id is rejected (no title leak)', async () => {
+    const { user: attacker } = createUser(testDb);
+    const { user: victim } = createUser(testDb);
+    const attackerTrip = createTrip(testDb, attacker.id);
+    const victimTrip = createTrip(testDb, victim.id);
+    const victimReservation = createReservation(testDb, victimTrip.id, { title: 'Victim Secret Flight', type: 'flight' });
+    const upload = await uploadFile(attackerTrip.id, attacker.id, FIXTURE_PDF);
+    const fileId = upload.body.file.id;
+
+    const res = await request(app)
+      .put(`/api/trips/${attackerTrip.id}/files/${fileId}`)
+      .set('Cookie', authCookie(attacker.id))
+      .send({ reservation_id: victimReservation.id });
+    expect(res.status).toBe(400);
+    expect(JSON.stringify(res.body)).not.toContain('Victim Secret Flight');
+  });
+
+  it('SEC-FILE-LINK-004 — linking a file to a place from another trip is rejected', async () => {
+    const { user: attacker } = createUser(testDb);
+    const { user: victim } = createUser(testDb);
+    const attackerTrip = createTrip(testDb, attacker.id);
+    const victimTrip = createTrip(testDb, victim.id);
+    const victimPlace = createPlace(testDb, victimTrip.id, { name: 'Victim Secret Place' });
+    const upload = await uploadFile(attackerTrip.id, attacker.id, FIXTURE_PDF);
+    const fileId = upload.body.file.id;
+
+    const link = await request(app)
+      .post(`/api/trips/${attackerTrip.id}/files/${fileId}/link`)
+      .set('Cookie', authCookie(attacker.id))
+      .send({ place_id: victimPlace.id });
+    expect(link.status).toBe(400);
+
+    const links = await request(app)
+      .get(`/api/trips/${attackerTrip.id}/files/${fileId}/links`)
+      .set('Cookie', authCookie(attacker.id));
+    expect((links.body.links as any[]).some((l) => l.place_id === victimPlace.id)).toBe(false);
+  });
+
+  it('SEC-FILE-LINK-005 — same-trip reservation links and uploads still succeed', async () => {
+    const { user } = createUser(testDb);
+    const trip = createTrip(testDb, user.id);
+    const resv = createReservation(testDb, trip.id, { title: 'My Own Flight', type: 'flight' });
+
+    // Upload carrying the trip's own reservation id is accepted.
+    const upload = await request(app)
+      .post(`/api/trips/${trip.id}/files`)
+      .set('Cookie', authCookie(user.id))
+      .field('reservation_id', String(resv.id))
+      .attach('file', FIXTURE_PDF);
+    expect(upload.status).toBe(201);
+    const fileId = upload.body.file.id;
+
+    // And linking it to the same reservation works.
+    const link = await request(app)
+      .post(`/api/trips/${trip.id}/files/${fileId}/link`)
+      .set('Cookie', authCookie(user.id))
+      .send({ reservation_id: resv.id });
+    expect(link.status).toBe(200);
   });
 });
 

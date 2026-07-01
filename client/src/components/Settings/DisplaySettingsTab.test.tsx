@@ -150,6 +150,22 @@ describe('DisplaySettingsTab', () => {
     expect(updateSetting).toHaveBeenCalledWith('temperature_unit', 'fahrenheit');
   });
 
+  it('FE-COMP-DISPLAY-028: metric distance button is active by default', () => {
+    seedStore(useSettingsStore, { settings: { temperature_unit: 'celsius' } });
+    render(<DisplaySettingsTab />);
+    const metricBtn = screen.getByText('km Metric').closest('button')!;
+    expect(metricBtn.style.border).toContain('var(--text-primary)');
+  });
+
+  it('FE-COMP-DISPLAY-029: clicking imperial distance calls updateSetting with imperial', async () => {
+    const user = userEvent.setup();
+    const updateSetting = vi.fn().mockResolvedValue(undefined);
+    seedStore(useSettingsStore, { settings: buildSettings({ distance_unit: 'metric' }), updateSetting });
+    render(<DisplaySettingsTab />);
+    await user.click(screen.getByText('mi Imperial'));
+    expect(updateSetting).toHaveBeenCalledWith('distance_unit', 'imperial');
+  });
+
   it('FE-COMP-DISPLAY-020: clicking 24h time format calls updateSetting with 24h', async () => {
     const user = userEvent.setup();
     const updateSetting = vi.fn().mockResolvedValue(undefined);
@@ -159,29 +175,6 @@ describe('DisplaySettingsTab', () => {
     // Click the button that contains the 24h text instead of matching the full string.
     await user.click(screen.getByRole('button', { name: /24h/ }));
     expect(updateSetting).toHaveBeenCalledWith('time_format', '24h');
-  });
-
-  it('FE-COMP-DISPLAY-021: shows Route Calculation section', () => {
-    render(<DisplaySettingsTab />);
-    expect(screen.getByText(/route calculation/i)).toBeInTheDocument();
-  });
-
-  it('FE-COMP-DISPLAY-022: route calculation On button is active when route_calculation is true', () => {
-    seedStore(useSettingsStore, { settings: buildSettings({ route_calculation: true }) });
-    render(<DisplaySettingsTab />);
-    const onButtons = screen.getAllByText(/^On$/i);
-    const routeCalcOnBtn = onButtons[0].closest('button')!;
-    expect(routeCalcOnBtn.style.border).toContain('var(--text-primary)');
-  });
-
-  it('FE-COMP-DISPLAY-023: clicking route calculation Off calls updateSetting with false', async () => {
-    const user = userEvent.setup();
-    const updateSetting = vi.fn().mockResolvedValue(undefined);
-    seedStore(useSettingsStore, { settings: buildSettings({ route_calculation: true }), updateSetting });
-    render(<DisplaySettingsTab />);
-    const offButtons = screen.getAllByText(/^Off$/i);
-    await user.click(offButtons[0]);
-    expect(updateSetting).toHaveBeenCalledWith('route_calculation', false);
   });
 
   it('FE-COMP-DISPLAY-024: shows Blur Booking Codes section', () => {

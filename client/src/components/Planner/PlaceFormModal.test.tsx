@@ -178,7 +178,7 @@ describe('PlaceFormModal', () => {
     await user.type(searchInput, 'Eiffel Tower');
 
     // The search button is the sibling button of the search input
-    const searchRow = searchInput.closest('.flex')!;
+    const searchRow = searchInput.closest('.flex') as HTMLElement;
     const searchBtn = within(searchRow).getByRole('button');
     await user.click(searchBtn);
 
@@ -225,13 +225,16 @@ describe('PlaceFormModal', () => {
     expect(screen.getByDisplayValue('48.8584')).toBeInTheDocument();
   });
 
-  it('FE-PLANNER-PLACEFORM-021: maps search error shows toast', async () => {
+  it('FE-PLANNER-PLACEFORM-021: maps search error surfaces the server-provided reason', async () => {
     const addToast = vi.fn();
     window.__addToast = addToast;
 
     const user = userEvent.setup();
+    // The backend forwards the real upstream error (e.g. a Google Places API message);
+    // the modal must show it instead of a generic "search failed" so the cause is visible.
     server.use(
-      http.post('/api/maps/search', () => HttpResponse.json({ error: 'fail' }, { status: 500 })),
+      http.post('/api/maps/search', () =>
+        HttpResponse.json({ error: 'Places API (New) has not been used in project 123 or it is disabled' }, { status: 403 })),
     );
 
     render(<PlaceFormModal {...defaultProps} />);
@@ -241,12 +244,107 @@ describe('PlaceFormModal', () => {
 
     await waitFor(() => {
       expect(addToast).toHaveBeenCalledWith(
-        expect.stringMatching(/search failed/i),
+        expect.stringMatching(/Places API \(New\) has not been used/i),
         'error',
         undefined,
       );
     });
 
+    delete window.__addToast;
+  });
+
+  // ── Autocomplete suggestion click (#1192) ─────────────────────────────────────
+  // Selecting a dropdown suggestion does a second `details` lookup which is fragile
+  // (details kill-switch, an overloaded OSM Overpass mirror, upstream errors). When
+  // it yields no usable place the modal must fall back to the reliable text search
+  // instead of dead-ending on "Place search failed".
+
+  async function openSuggestion(user: ReturnType<typeof userEvent.setup>) {
+    const searchInput = screen.getByPlaceholderText('Search places...');
+    await user.type(searchInput, 'Eiffel');
+    // Debounced autocomplete (300ms) then the dropdown renders the suggestion.
+    return screen.findByText('Paris, France');
+  }
+
+  it('FE-PLANNER-PLACEFORM-021b: suggestion click falls back to search when details fails', async () => {
+    const addToast = vi.fn();
+    window.__addToast = addToast;
+    const user = userEvent.setup();
+    server.use(
+      http.post('/api/maps/autocomplete', () =>
+        HttpResponse.json({
+          suggestions: [{ placeId: 'node:123', mainText: 'Eiffel Tower', secondaryText: 'Paris, France' }],
+          source: 'nominatim',
+        }),
+      ),
+      // details rejects (e.g. proxy 504 from a hung Overpass mirror)
+      http.get('/api/maps/details/:placeId', () => HttpResponse.json({ error: 'boom' }, { status: 500 })),
+      http.post('/api/maps/search', () =>
+        HttpResponse.json({
+          places: [{ name: 'Eiffel Tower', address: 'Paris, France', lat: '48.8584', lng: '2.2945' }],
+          source: 'openstreetmap',
+        }),
+      ),
+    );
+
+    render(<PlaceFormModal {...defaultProps} />);
+    const suggestion = await openSuggestion(user);
+    await user.click(suggestion);
+
+    // Form is populated from the search fallback, and no error toast is shown.
+    expect(await screen.findByDisplayValue('48.8584')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('2.2945')).toBeInTheDocument();
+    expect(addToast).not.toHaveBeenCalledWith(expect.anything(), 'error', expect.anything());
+    delete window.__addToast;
+  });
+
+  it('FE-PLANNER-PLACEFORM-021c: suggestion click falls back when details is disabled (place: null)', async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.post('/api/maps/autocomplete', () =>
+        HttpResponse.json({
+          suggestions: [{ placeId: 'node:123', mainText: 'Eiffel Tower', secondaryText: 'Paris, France' }],
+          source: 'nominatim',
+        }),
+      ),
+      http.get('/api/maps/details/:placeId', () => HttpResponse.json({ place: null, disabled: true })),
+      http.post('/api/maps/search', () =>
+        HttpResponse.json({
+          places: [{ name: 'Eiffel Tower', address: 'Paris, France', lat: '48.8584', lng: '2.2945' }],
+          source: 'openstreetmap',
+        }),
+      ),
+    );
+
+    render(<PlaceFormModal {...defaultProps} />);
+    const suggestion = await openSuggestion(user);
+    await user.click(suggestion);
+
+    expect(await screen.findByDisplayValue('48.8584')).toBeInTheDocument();
+  });
+
+  it('FE-PLANNER-PLACEFORM-021d: suggestion click shows error only when the fallback also finds nothing', async () => {
+    const addToast = vi.fn();
+    window.__addToast = addToast;
+    const user = userEvent.setup();
+    server.use(
+      http.post('/api/maps/autocomplete', () =>
+        HttpResponse.json({
+          suggestions: [{ placeId: 'node:123', mainText: 'Eiffel Tower', secondaryText: 'Paris, France' }],
+          source: 'nominatim',
+        }),
+      ),
+      http.get('/api/maps/details/:placeId', () => HttpResponse.json({ place: null, disabled: true })),
+      http.post('/api/maps/search', () => HttpResponse.json({ places: [], source: 'openstreetmap' })),
+    );
+
+    render(<PlaceFormModal {...defaultProps} />);
+    const suggestion = await openSuggestion(user);
+    await user.click(suggestion);
+
+    await waitFor(() => {
+      expect(addToast).toHaveBeenCalledWith('Place search failed.', 'error', undefined);
+    });
     delete window.__addToast;
   });
 
@@ -265,6 +363,18 @@ describe('PlaceFormModal', () => {
     render(<PlaceFormModal {...defaultProps} categories={cats} />);
     // The "No category" placeholder text from CustomSelect should be visible
     expect(screen.getByText(/No category/i)).toBeInTheDocument();
+  });
+
+  it('FE-PLANNER-PLACEFORM-023b: editing a place shows its assigned category, not the placeholder (#1134)', () => {
+    // Regression: form.category_id is a string but the option values were numbers,
+    // so CustomSelect's strict-equality match failed and the trigger fell back to
+    // "No category". With string option values the chosen category renders.
+    const cat = buildCategory({ name: 'Museums' });
+    const place = buildPlace({ name: 'Louvre', category_id: cat.id });
+    render(<PlaceFormModal {...defaultProps} place={place} categories={[cat]} />);
+    // Dropdown is closed, so the only place the category name can appear is the trigger.
+    expect(screen.getByText('Museums')).toBeInTheDocument();
+    expect(screen.queryByText(/No category/i)).not.toBeInTheDocument();
   });
 
   it('FE-PLANNER-PLACEFORM-024: onCategoryCreated is called when creating a category', async () => {
@@ -289,17 +399,38 @@ describe('PlaceFormModal', () => {
     expect(screen.queryByTestId('time-picker')).not.toBeInTheDocument();
   });
 
-  it('FE-PLANNER-PLACEFORM-026: time section IS shown in edit mode', () => {
+  it('FE-PLANNER-PLACEFORM-026: time section is hidden in edit mode when no assignment is in context', () => {
+    // Times are per day-assignment; editing a pool place with no day in context
+    // (assignmentId null) hides the fields, which otherwise would not persist (#1247)
     const place = buildPlace({ name: 'Test' });
     render(<PlaceFormModal {...defaultProps} place={place} assignmentId={null} />);
-    // Time pickers are rendered when editing
+    expect(screen.queryByTestId('time-picker')).not.toBeInTheDocument();
+  });
+
+  it('FE-PLANNER-PLACEFORM-026b: time section IS shown when an assignment is in context', () => {
+    const place = buildPlace({ name: 'Test', place_time: '09:00', end_time: '10:00' });
+    const assignment = buildAssignment({ id: 10, day_id: 5, place });
+    render(<PlaceFormModal {...defaultProps} place={place} assignmentId={10} dayAssignments={[assignment]} />);
     expect(screen.getAllByTestId('time-picker').length).toBeGreaterThanOrEqual(2);
   });
 
+  it('FE-PLANNER-PLACEFORM-026c: hydrates Start/End from the assignment when the pool place lacks times (#1247)', () => {
+    // The pool Place carries no times — they live on the day-assignment. Opening the
+    // editor with an assignmentId must hydrate the fields from assignment.place, not
+    // the (timeless) pool place that the Places panel passes in.
+    const poolPlace = buildPlace({ id: 7, name: 'Museum' });
+    const assignmentPlace = buildPlace({ id: 7, name: 'Museum', place_time: '20:20', end_time: '20:34' });
+    const assignment = buildAssignment({ id: 42, day_id: 3, place: assignmentPlace });
+    render(<PlaceFormModal {...defaultProps} place={poolPlace} assignmentId={42} dayAssignments={[assignment]} />);
+    expect(screen.getByDisplayValue('20:20')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('20:34')).toBeInTheDocument();
+  });
+
   it('FE-PLANNER-PLACEFORM-027: end-before-start error disables submit', () => {
-    // Build a place with end_time before place_time
+    // Build an assignment whose place has end_time before place_time
     const place = buildPlace({ name: 'Test', place_time: '14:00', end_time: '13:00' });
-    render(<PlaceFormModal {...defaultProps} place={place} assignmentId={null} />);
+    const assignment = buildAssignment({ id: 11, day_id: 5, place });
+    render(<PlaceFormModal {...defaultProps} place={place} assignmentId={11} dayAssignments={[assignment]} />);
 
     // hasTimeError = true → submit button disabled
     const submitBtn = screen.getByRole('button', { name: /^Update$/i });
@@ -363,7 +494,7 @@ describe('PlaceFormModal', () => {
     await screen.findByText('remove-me.jpg');
 
     // The X button is inside the file item's container div
-    const fileItem = screen.getByText('remove-me.jpg').closest('div.flex')!;
+    const fileItem = screen.getByText('remove-me.jpg').closest('div.flex') as HTMLElement;
     const removeBtn = within(fileItem).getByRole('button');
     await user.click(removeBtn);
 

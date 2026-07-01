@@ -1,6 +1,9 @@
 import Database from 'better-sqlite3';
 import crypto from 'crypto';
 
+// bcrypt cost factor for the seeded admin password — kept in sync with authService.
+const BCRYPT_COST = 12;
+
 // Seeds run at startup before the DB admin panel can be used, so only env vars
 // are checked here. The granular password_login/password_registration DB toggles
 // are only relevant after the first user exists; at that point seeds have already
@@ -14,6 +17,11 @@ function seedAdminAccount(db: Database.Database): void {
   try {
     const userCount = (db.prepare('SELECT COUNT(*) as count FROM users').get() as { count: number }).count;
     if (userCount > 0) return;
+
+    // Demo mode seeds its own admin (admin@trek.app, username 'admin') right after this.
+    // Creating a first-run admin here would grab username 'admin' first and make the demo
+    // seeder fail on the UNIQUE(username) constraint, leaving the demo user uncreated.
+    if (process.env.DEMO_MODE?.toLowerCase() === 'true') return;
 
     if (isOidcOnlyConfigured()) {
       console.log('');
@@ -40,7 +48,7 @@ function seedAdminAccount(db: Database.Database): void {
       email = 'admin@trek.local';
     }
 
-    const hash = bcrypt.hashSync(password, 12);
+    const hash = bcrypt.hashSync(password, BCRYPT_COST);
     const username = 'admin';
 
     db.prepare('INSERT INTO users (username, email, password_hash, role, must_change_password) VALUES (?, ?, ?, ?, 1)').run(username, email, hash, 'admin');
@@ -87,7 +95,7 @@ function seedAddons(db: Database.Database): void {
   try {
     const defaultAddons = [
       { id: 'packing', name: 'Lists', description: 'Packing lists and to-do tasks for your trips', type: 'trip', icon: 'ListChecks', enabled: 1, sort_order: 0 },
-      { id: 'budget', name: 'Budget Planner', description: 'Track expenses and plan your travel budget', type: 'trip', icon: 'Wallet', enabled: 1, sort_order: 1 },
+      { id: 'budget', name: 'Costs', description: 'Track and split trip expenses', type: 'trip', icon: 'Wallet', enabled: 1, sort_order: 1 },
       { id: 'documents', name: 'Documents', description: 'Store and manage travel documents', type: 'trip', icon: 'FileText', enabled: 1, sort_order: 2 },
       { id: 'vacay', name: 'Vacay', description: 'Personal vacation day planner with calendar view', type: 'global', icon: 'CalendarDays', enabled: 1, sort_order: 10 },
       { id: 'atlas', name: 'Atlas', description: 'World map of your visited countries with travel stats', type: 'global', icon: 'Globe', enabled: 1, sort_order: 11 },
@@ -95,6 +103,7 @@ function seedAddons(db: Database.Database): void {
       { id: 'naver_list_import', name: 'Naver List Import', description: 'Import places from shared Naver Maps lists', type: 'trip', icon: 'Link2', enabled: 1, sort_order: 13 },
       { id: 'collab', name: 'Collab', description: 'Notes, polls, and live chat for trip collaboration', type: 'trip', icon: 'Users', enabled: 1, sort_order: 6 },
       { id: 'journey', name: 'Journey', description: 'Trip tracking & travel journal — check-ins, photos, daily stories', type: 'global', icon: 'Compass', enabled: 0, sort_order: 35 },
+      { id: 'airtrail', name: 'AirTrail', description: 'Sync flights from your self-hosted AirTrail instance', type: 'integration', icon: 'Plane', enabled: 0, sort_order: 14 },
     ];
     const insertAddon = db.prepare('INSERT OR IGNORE INTO addons (id, name, description, type, icon, enabled, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)');
     for (const a of defaultAddons) insertAddon.run(a.id, a.name, a.description, a.type, a.icon, a.enabled, a.sort_order);

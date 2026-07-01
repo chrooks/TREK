@@ -16,7 +16,10 @@ import { resolveAuthToggles } from './authService';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-export function utcSuffix(ts: string | null | undefined): string | null {
+// bcrypt cost factor for user passwords — kept in sync with authService.
+const BCRYPT_COST = 12;
+
+function utcSuffix(ts: string | null | undefined): string | null {
   if (!ts) return null;
   return ts.endsWith('Z') ? ts : ts.replace(' ', 'T') + 'Z';
 }
@@ -94,7 +97,7 @@ export function createUser(data: { username: string; email: string; password: st
   const existingEmail = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
   if (existingEmail) return { error: 'Email already taken', status: 409 };
 
-  const passwordHash = bcrypt.hashSync(password, 12);
+  const passwordHash = bcrypt.hashSync(password, BCRYPT_COST);
 
   const result = db.prepare(
     'INSERT INTO users (username, email, password_hash, role) VALUES (?, ?, ?, ?)'
@@ -112,7 +115,9 @@ export function createUser(data: { username: string; email: string; password: st
 }
 
 export function updateUser(id: string, data: { username?: string; email?: string; role?: string; password?: string }) {
-  const { username, email, role, password } = data;
+  const username = typeof data.username === 'string' ? data.username.trim() : data.username;
+  const email = typeof data.email === 'string' ? data.email.trim() : data.email;
+  const { role, password } = data;
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id) as User | undefined;
 
   if (!user) return { error: 'User not found', status: 404 };
@@ -134,7 +139,17 @@ export function updateUser(id: string, data: { username?: string; email?: string
     const pwCheck = validatePassword(password);
     if (!pwCheck.ok) return { error: pwCheck.reason, status: 400 };
   }
-  const passwordHash = password ? bcrypt.hashSync(password, 12) : null;
+  const passwordHash = password ? bcrypt.hashSync(password, BCRYPT_COST) : null;
+
+  // Don't let the admin UI demote the last remaining admin — that would leave the
+  // instance with no one able to manage it (and on OIDC-only setups, no recovery). #1274
+  if (role && role !== 'admin') {
+    const current = db.prepare('SELECT role FROM users WHERE id = ?').get(id) as { role?: string } | undefined;
+    if (current?.role === 'admin') {
+      const adminCount = (db.prepare("SELECT COUNT(*) as count FROM users WHERE role = 'admin'").get() as { count: number }).count;
+      if (adminCount <= 1) return { error: 'Cannot remove the last admin', status: 400 };
+    }
+  }
 
   db.prepare(`
     UPDATE users SET

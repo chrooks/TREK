@@ -29,9 +29,26 @@ vi.mock('../../../src/db/database', () => ({
   },
 }));
 
-vi.mock('../../../src/utils/ssrfGuard', () => ({
-  checkSsrf: mockCheckSsrf,
-}));
+vi.mock('../../../src/utils/ssrfGuard', () => {
+  class SsrfBlockedError extends Error {
+    constructor(message: string) {
+      super(message);
+      this.name = 'SsrfBlockedError';
+    }
+  }
+  return {
+    checkSsrf: mockCheckSsrf,
+    SsrfBlockedError,
+    // Mirror the real per-hop helper closely enough for unit tests: run the
+    // (mocked) SSRF check, then fetch through the (stubbed) global fetch. The
+    // fetch stubs in these tests already return the final resolved response.
+    safeFetchFollow: vi.fn(async (url: string, init?: any) => {
+      const ssrf = await mockCheckSsrf(url);
+      if (!ssrf.allowed) throw new SsrfBlockedError(ssrf.error ?? 'Request blocked by SSRF guard');
+      return (globalThis.fetch as any)(url, init);
+    }),
+  };
+});
 
 vi.mock('../../../src/services/apiKeyCrypto', () => ({
   decrypt_api_key: (v: string | null) => v,
@@ -56,6 +73,11 @@ import {
   parseOpeningHours,
   buildOsmDetails,
   getMapsKey,
+  googleFtidFromMapsUrl,
+  buildUserAgent,
+  resolveOverpassEndpoints,
+  resolveOverpassTimeoutMs,
+  searchOverpassPois,
 } from '../../../src/services/mapsService';
 
 afterEach(() => {
@@ -315,6 +337,41 @@ describe('resolveGoogleMapsUrl coordinate extraction (ReDoS guards)', () => {
     expect(result.name).toBe('Eiffel Tower');
   });
 
+  it('MAPS-CID-001: resolves a cid= URL by following the redirect to a coordinate URL', async () => {
+    // cid URLs (what get_place_details returns, and Google "Share" links) carry no
+    // inline coords; the redirect target carries the !3d!4d data param.
+    const fetchMock = vi.fn(async (u: string) => {
+      if (u.includes('nominatim')) {
+        return { ok: true, json: async () => ({ display_name: 'Paris, France', name: 'Eiffel Tower', address: {} }) };
+      }
+      return { url: 'https://www.google.com/maps/place/Eiffel+Tower/data=!3d48.8584!4d2.2945', text: async () => '' };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { resolveGoogleMapsUrl } = await import('../../../src/services/mapsService');
+    const result = await resolveGoogleMapsUrl('https://maps.google.com/?cid=1234567890');
+    expect(result.lat).toBeCloseTo(48.8584, 3);
+    expect(result.lng).toBeCloseTo(2.2945, 3);
+  });
+
+  it('MAPS-CID-002: falls back to parsing coordinates from the page body', async () => {
+    const fetchMock = vi.fn(async (u: string) => {
+      if (u.includes('nominatim')) {
+        return { ok: true, json: async () => ({ display_name: 'NYC, USA', name: null, address: {} }) };
+      }
+      if (u.includes('cid=')) {
+        // Redirect target has no inline coords.
+        return { url: 'https://www.google.com/maps/place/Somewhere', text: async () => '' };
+      }
+      // Body fetch of the resolved URL embeds coords in the map data.
+      return { url: 'https://www.google.com/maps/place/Somewhere', text: async () => 'x!3d40.6892!4d-74.0445y' };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { resolveGoogleMapsUrl } = await import('../../../src/services/mapsService');
+    const result = await resolveGoogleMapsUrl('https://www.google.com/maps?cid=999');
+    expect(result.lat).toBeCloseTo(40.6892, 3);
+    expect(result.lng).toBeCloseTo(-74.0445, 3);
+  });
+
   it('MAPS-024 (ReDoS): /@(-?\\d+\\.?\\d*),(-?\\d+\\.?\\d*)/ on adversarial input < 500ms', () => {
     const adversarial = '/@' + '1'.repeat(10000) + '.';
     const start = Date.now();
@@ -521,6 +578,31 @@ describe('fetchWikimediaPhoto (fetch stubbed)', () => {
     expect(result!.attribution).toBe('Alice');
   });
 
+  it('MAPS-036b: geosearch prefers the scaled thumburl over the full-res original', async () => {
+    const wikiResponse = { ok: true, json: async () => ({ query: { pages: { '-1': {} } } }) };
+    const commonsResponse = {
+      ok: true,
+      json: async () => ({
+        query: { pages: { '1': {
+          imageinfo: [{
+            url: 'https://commons.org/original-16mb.jpg',
+            thumburl: 'https://commons.org/thumb-400.jpg',
+            mime: 'image/jpeg',
+            extmetadata: { Artist: { value: 'Alice' } },
+          }],
+        } } },
+      }),
+    };
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(wikiResponse)
+      .mockResolvedValueOnce(commonsResponse));
+    const { fetchWikimediaPhoto } = await import('../../../src/services/mapsService');
+    const result = await fetchWikimediaPhoto(48.8, 2.3, 'Some Place');
+    expect(result).toBeDefined();
+    expect(result!.photoUrl).toBe('https://commons.org/thumb-400.jpg');
+    expect(result!.attribution).toBe('Alice');
+  });
+
   it('MAPS-037: returns null when both strategies find nothing', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: true,
@@ -674,13 +756,21 @@ describe('searchPlaces (fetch stubbed)', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
-        places: [{ id: 'gid1', displayName: { text: 'Eiffel Tower' }, formattedAddress: 'Paris', location: { latitude: 48.8, longitude: 2.3 } }],
+        places: [{
+          id: 'gid1',
+          displayName: { text: 'Eiffel Tower' },
+          formattedAddress: 'Paris',
+          location: { latitude: 48.8, longitude: 2.3 },
+          // Real search API returns a cid-style URL with no ftid → google_ftid stays null.
+          googleMapsUri: 'https://maps.google.com/?cid=10403719659250533155',
+        }],
       }),
     }));
     const { searchPlaces } = await import('../../../src/services/mapsService');
     const result = await searchPlaces(1, 'Eiffel Tower');
     expect(result.source).toBe('google');
     expect((result.places[0] as any).google_place_id).toBe('gid1');
+    expect((result.places[0] as any).google_ftid).toBeNull();
   });
 
   it('MAPS-039b: throws with Google error status when Google API returns non-ok', async () => {
@@ -736,6 +826,7 @@ describe('searchPlaces (fetch stubbed)', () => {
     const result = await searchPlaces(1, 'sparse');
     const place = result.places[0] as any;
     expect(place.google_place_id).toBe('gid-sparse');
+    expect(place.google_ftid).toBeNull();
     expect(place.name).toBe('');
     expect(place.address).toBe('');
     expect(place.lat).toBeNull();
@@ -1005,7 +1096,9 @@ describe('getPlaceDetails (fetch stubbed)', () => {
           weekdayDescriptions: ['Monday: 9:00 AM – 12:00 AM'],
           openNow: true,
         },
-        googleMapsUri: 'https://maps.google.com/?cid=123',
+        // The Places API returns a cid-style URL with no ftid, so google_ftid stays null
+        // and the precise query_place_id link is used on the client instead.
+        googleMapsUri: 'https://maps.google.com/?cid=10403719659250533155',
         editorialSummary: { text: 'Iconic iron tower.' },
         reviews: [
           {
@@ -1022,6 +1115,7 @@ describe('getPlaceDetails (fetch stubbed)', () => {
     const result = await getPlaceDetails(1, 'ChIJ123');
     const place = result.place as any;
     expect(place.google_place_id).toBe('ChIJ123');
+    expect(place.google_ftid).toBeNull();
     expect(place.name).toBe('Eiffel Tower');
     expect(place.rating).toBe(4.7);
     expect(place.rating_count).toBe(200000);
@@ -1030,6 +1124,26 @@ describe('getPlaceDetails (fetch stubbed)', () => {
     // Lean mask — reviews/summary not fetched in getPlaceDetails; use getPlaceDetailsExpanded for those
     expect(place.reviews).toHaveLength(0);
     expect(place.summary).toBeNull();
+  });
+
+  it('MAPS-041b2: normalises non-standard TREK language codes for Google (br→pt-BR, gr→el)', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ id: 'ChIJ1', displayName: { text: 'X' }, location: { latitude: 0, longitude: 0 } }),
+    });
+    mockDbGet.mockReturnValue({ maps_api_key: 'gkey' });
+    vi.stubGlobal('fetch', fetchMock);
+    const { getPlaceDetails } = await import('../../../src/services/mapsService');
+
+    await getPlaceDetails(1, 'ChIJ-br', 'br');
+    expect(String(fetchMock.mock.calls[0][0])).toContain('languageCode=pt-BR');
+
+    await getPlaceDetails(1, 'ChIJ-gr', 'gr');
+    expect(String(fetchMock.mock.calls[1][0])).toContain('languageCode=el');
+
+    // A code that is already valid passes through unchanged.
+    await getPlaceDetails(1, 'ChIJ-de', 'de');
+    expect(String(fetchMock.mock.calls[2][0])).toContain('languageCode=de');
   });
 
   it('MAPS-041c: throws with status when Google API returns non-ok response', async () => {
@@ -1336,5 +1450,146 @@ describe('getPlacePhoto (fetch stubbed)', () => {
     const result = await getPlacePhoto(1, uniqueId, 48.8, 2.3, 'Coords Place');
     expect(result.photoUrl).toBe(`/api/maps/place-photo/${encodeURIComponent(uniqueId)}/bytes`);
     expect(mockCachePut).toHaveBeenCalledOnce();
+  });
+
+  it('MAPS-044g: falls back to Wikipedia/OSM for a Google place_id when the Google photo call fails', async () => {
+    // A key is present and the placeId is a Google id, but Google rejects the
+    // photo request (e.g. 403). The lookup must still return an image via the
+    // coordinate-based Wikipedia fallback instead of giving up with a 404 —
+    // matching what right-click (coords:) places already do.
+    mockDbGet.mockReturnValueOnce({ maps_api_key: 'gkey' });
+    vi.stubGlobal('fetch', vi.fn()
+      // 1) Google photo details → 403
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 403,
+        text: async () => JSON.stringify({ error: { message: 'PERMISSION_DENIED' } }),
+      })
+      // 2) Wikipedia pageimages → thumbnail
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ query: { pages: { '1': { thumbnail: { source: 'https://wiki.org/guinness.jpg' } } } } }),
+      })
+      // 3) image bytes
+      .mockResolvedValueOnce({
+        ok: true,
+        arrayBuffer: async () => new ArrayBuffer(200),
+      })
+    );
+    const { getPlacePhoto } = await import('../../../src/services/mapsService');
+    const placeId = `ChIJFallback-${Date.now()}`;
+    const result = await getPlacePhoto(1, placeId, 53.34, -6.28, 'Guinness Storehouse');
+    expect(result.photoUrl).toBe(`/api/maps/place-photo/${encodeURIComponent(placeId)}/bytes`);
+    expect(result.attribution).toBe('Wikipedia');
+    expect(mockCachePut).toHaveBeenCalledOnce();
+  });
+});
+
+describe('googleFtidFromMapsUrl', () => {
+  it('MAPS-FTID-001: extracts a valid ftid from a /place/?ftid= URL (resolved share link)', () => {
+    expect(googleFtidFromMapsUrl('https://www.google.com/maps/place/?q=X&ftid=0x882bf179e806d471:0x8591dde29c821a93'))
+      .toBe('0x882bf179e806d471:0x8591dde29c821a93');
+  });
+  it('MAPS-FTID-002: returns null for a cid-style URL (the usual Places API shape)', () => {
+    expect(googleFtidFromMapsUrl('https://maps.google.com/?cid=10403719659250533155')).toBeNull();
+  });
+  it('MAPS-FTID-003: rejects malformed / hostile ftid values', () => {
+    expect(googleFtidFromMapsUrl('https://maps.google.com/?ftid=not-an-ftid')).toBeNull();
+    expect(googleFtidFromMapsUrl('https://maps.google.com/?ftid=0xAB%26q%3Devil%3Cscript%3E')).toBeNull();
+    expect(googleFtidFromMapsUrl('not a url')).toBeNull();
+    expect(googleFtidFromMapsUrl(null)).toBeNull();
+  });
+});
+
+// ── buildUserAgent (instance-specific UA, #1309) ──────────────────────────────
+
+describe('buildUserAgent', () => {
+  const base = 'TREK Travel Planner (https://github.com/mauriceboe/TREK)';
+
+  it('MAPS-094: returns the bare base UA when no instance URL is configured', () => {
+    expect(buildUserAgent(undefined)).toBe(base);
+    expect(buildUserAgent('')).toBe(base);
+  });
+
+  it('MAPS-095: appends a configured https instance URL so the deployment is identifiable', () => {
+    expect(buildUserAgent('https://trek.example.org')).toBe(`${base}; https://trek.example.org`);
+  });
+
+  it('MAPS-096: drops the http://localhost fallback — it is not a unique identifier', () => {
+    expect(buildUserAgent('http://localhost:3001')).toBe(base);
+  });
+});
+
+// ── resolveOverpassEndpoints (OVERPASS_URL override, #1309) ────────────────────
+
+describe('resolveOverpassEndpoints', () => {
+  it('MAPS-097: falls back to the public mirrors when OVERPASS_URL is unset/empty', () => {
+    expect(resolveOverpassEndpoints(undefined).length).toBeGreaterThan(1);
+    expect(resolveOverpassEndpoints('').length).toBeGreaterThan(1);
+    expect(resolveOverpassEndpoints(undefined)[0]).toContain('overpass-api.de');
+  });
+
+  it('MAPS-098: a single custom endpoint REPLACES the public mirrors (locked-down egress)', () => {
+    expect(resolveOverpassEndpoints('https://overpass.internal/api/interpreter'))
+      .toEqual(['https://overpass.internal/api/interpreter']);
+  });
+
+  it('MAPS-099: parses a comma-separated list and trims whitespace', () => {
+    expect(resolveOverpassEndpoints(' https://a.test/api , http://b.test/api '))
+      .toEqual(['https://a.test/api', 'http://b.test/api']);
+  });
+
+  it('MAPS-100: drops non-http(s) / malformed entries, keeping the valid ones', () => {
+    expect(resolveOverpassEndpoints('https://ok.test/api, ftp://no.test, not a url'))
+      .toEqual(['https://ok.test/api']);
+  });
+
+  it('MAPS-101: falls back to the defaults when every custom entry is invalid', () => {
+    expect(resolveOverpassEndpoints('not a url, ftp://no.test').length).toBeGreaterThan(1);
+  });
+});
+
+// ── resolveOverpassTimeoutMs (OVERPASS_TIMEOUT_MS override, #1309) ─────────────
+
+describe('resolveOverpassTimeoutMs', () => {
+  it('MAPS-104: falls back to the 12s default for unset / empty / non-numeric values', () => {
+    expect(resolveOverpassTimeoutMs(undefined)).toBe(12000);
+    expect(resolveOverpassTimeoutMs('')).toBe(12000);
+    expect(resolveOverpassTimeoutMs('abc')).toBe(12000);
+  });
+
+  it('MAPS-105: honours a positive numeric override', () => {
+    expect(resolveOverpassTimeoutMs('30000')).toBe(30000);
+  });
+
+  it('MAPS-106: rejects 0, negative and Infinity — a non-positive cap would 502 every search', () => {
+    expect(resolveOverpassTimeoutMs('0')).toBe(12000);
+    expect(resolveOverpassTimeoutMs('-5')).toBe(12000);
+    expect(resolveOverpassTimeoutMs('Infinity')).toBe(12000);
+  });
+});
+
+// ── searchOverpassPois error path (all endpoints down, #1309) ──────────────────
+
+describe('searchOverpassPois all-endpoints-down', () => {
+  const bbox = { south: -41.2, west: 146.31, north: -41.16, east: 146.37 };
+
+  it('MAPS-102: surfaces a 502 with a clear message when every Overpass endpoint fails', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('connect ECONNREFUSED')));
+    await expect(searchOverpassPois('restaurant', bbox)).rejects.toMatchObject({
+      status: 502,
+      message: 'Could not reach any Overpass endpoint',
+    });
+    errSpy.mockRestore();
+  });
+
+  it('MAPS-103: logs each endpoint failure so an operator can diagnose blocked egress', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('connect ECONNREFUSED')));
+    await expect(searchOverpassPois('bar', bbox)).rejects.toThrow();
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('[Overpass] all'));
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('ECONNREFUSED'));
+    errSpy.mockRestore();
   });
 });

@@ -7,6 +7,16 @@ import { resetAllStores } from '../../../tests/helpers/store'
 import { buildPlace } from '../../../tests/helpers/factories'
 import * as photoService from '../../services/photoService'
 
+const mapMock = vi.hoisted(() => ({
+  panTo: vi.fn(),
+  setView: vi.fn(),
+  fitBounds: vi.fn(),
+  getZoom: vi.fn().mockReturnValue(10),
+  on: vi.fn(),
+  off: vi.fn(),
+  panBy: vi.fn(),
+}))
+
 vi.mock('react-leaflet', () => ({
   MapContainer: ({ children }: any) => <div data-testid="map-container">{children}</div>,
   TileLayer: () => <div data-testid="tile-layer" />,
@@ -27,15 +37,7 @@ vi.mock('react-leaflet', () => ({
   Polyline: ({ positions }: any) => <div data-testid="polyline" data-points={JSON.stringify(positions)} />,
   CircleMarker: () => <div data-testid="circle-marker" />,
   Circle: () => <div data-testid="circle" />,
-  useMap: () => ({
-    panTo: vi.fn(),
-    setView: vi.fn(),
-    fitBounds: vi.fn(),
-    getZoom: () => 10,
-    on: vi.fn(),
-    off: vi.fn(),
-    panBy: vi.fn(),
-  }),
+  useMap: () => mapMock,
   useMapEvents: () => ({}),
 }))
 
@@ -79,6 +81,7 @@ function buildMapPlace(overrides: Record<string, any> = {}) {
 }
 
 afterEach(() => {
+  vi.clearAllMocks()
   resetAllStores()
 })
 
@@ -125,7 +128,8 @@ describe('MapView', () => {
 
   it('FE-COMP-MAPVIEW-006: renders polyline when route has 2+ points', () => {
     render(<MapView route={[[[48.0, 2.0], [49.0, 3.0]]]} />)
-    expect(screen.getByTestId('polyline')).toBeTruthy()
+    // Apple-Maps style draws a casing + a core line per segment.
+    expect(screen.getAllByTestId('polyline').length).toBeGreaterThan(0)
   })
 
   it('FE-COMP-MAPVIEW-007: does not render polyline when route is null', () => {
@@ -152,16 +156,11 @@ describe('MapView', () => {
     expect(screen.getByTestId('cluster-group')).toBeTruthy()
   })
 
-  it('FE-COMP-MAPVIEW-011: renders RouteLabel marker when routeSegments provided with route', () => {
-    const route = [[[48.0, 2.0], [49.0, 3.0]]] as [number, number][][][]
-    const routeSegments = [
-      { mid: [48.5, 2.5] as [number, number], from: 0, to: 1, walkingText: '10 min', drivingText: '3 min' },
-    ]
-    render(<MapView route={route} routeSegments={routeSegments} />)
-    // Route polyline is rendered
-    expect(screen.getByTestId('polyline')).toBeTruthy()
-    // RouteLabel renders a Marker (mocked), but it returns null when zoom < 12
-    // so we just assert the polyline is there, exercising the routeSegments.map path
+  it('FE-COMP-MAPVIEW-011: renders the route polyline; travel times are no longer drawn on the map', () => {
+    const route = [[[48.0, 2.0], [49.0, 3.0]]] as unknown as [number, number][][]
+    render(<MapView route={route} />)
+    // The route is drawn; per-segment times now live in the day sidebar, not on the map.
+    expect(screen.getAllByTestId('polyline').length).toBeGreaterThan(0)
   })
 
   it('FE-COMP-MAPVIEW-012: invalid route_geometry JSON triggers catch and skips polyline', () => {
@@ -215,5 +214,34 @@ describe('MapView', () => {
     ]
     render(<MapView places={places} selectedPlaceId={5} />)
     expect(screen.getByTestId('marker')).toBeTruthy()
+  })
+
+  it('FE-COMP-MAPVIEW-018: changing selectedPlaceId/hasInspector does not refit bounds (issue #921)', () => {
+    const places = [
+      buildMapPlace({ id: 1, lat: 48.8584, lng: 2.2945 }),
+      buildMapPlace({ id: 2, lat: 48.86, lng: 2.337 }),
+    ]
+    const { rerender } = render(<MapView places={places} fitKey={1} selectedPlaceId={null} hasInspector={false} />)
+    const initialCount = mapMock.fitBounds.mock.calls.length
+
+    // Toggle selectedPlaceId on — mimics opening place inspector (hasInspector flips,
+    // paddingOpts memo creates new object). fitBounds must NOT fire again.
+    rerender(<MapView places={places} fitKey={1} selectedPlaceId={1} hasInspector={true} />)
+    expect(mapMock.fitBounds).toHaveBeenCalledTimes(initialCount)
+
+    // Toggle selectedPlaceId off — mimics closing inspector via X button.
+    rerender(<MapView places={places} fitKey={1} selectedPlaceId={null} hasInspector={false} />)
+    expect(mapMock.fitBounds).toHaveBeenCalledTimes(initialCount)
+  })
+
+  it('FE-COMP-MAPVIEW-019: bumping fitKey triggers a new fitBounds call', () => {
+    const places = [
+      buildMapPlace({ id: 1, lat: 48.8584, lng: 2.2945 }),
+    ]
+    const { rerender } = render(<MapView places={places} fitKey={1} />)
+    const afterFirst = mapMock.fitBounds.mock.calls.length
+
+    rerender(<MapView places={places} fitKey={2} />)
+    expect(mapMock.fitBounds.mock.calls.length).toBeGreaterThan(afterFirst)
   })
 })

@@ -5,6 +5,7 @@
 import { describe, it, expect, vi, beforeAll, beforeEach, afterAll } from 'vitest';
 import request from 'supertest';
 import type { Application } from 'express';
+import type { INestApplication } from '@nestjs/common';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // In-memory DB — schema applied in beforeAll after mocks register
@@ -38,20 +39,33 @@ vi.mock('../../src/config', () => ({
   JWT_SECRET: 'test-jwt-secret-for-trek-testing-only',
   ENCRYPTION_KEY: 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6a7b8c9d0e1f2a3b4c5d6a7b8c9d0e1f2',
   updateJwtSecret: () => {},
+  SESSION_DURATION: '24h',
+  SESSION_DURATION_MS: 86400000,
+  SESSION_DURATION_SECONDS: 86400,
+  DEFAULT_LANGUAGE: 'en',
 }));
+vi.mock('../../src/websocket', () => ({ broadcast: vi.fn(), broadcastToUser: vi.fn() }));
 
-import { createApp } from '../../src/app';
+import { buildApp } from '../../src/bootstrap';
 import { createTables } from '../../src/db/schema';
 import { runMigrations } from '../../src/db/migrations';
-import { resetTestDb } from '../helpers/test-db';
+import { resetTestDb, resetRateLimits } from '../helpers/test-db';
 import { createUser, createTrip, createDay, createPlace, addTripMember } from '../helpers/factories';
 import { authCookie } from '../helpers/auth';
-import { loginAttempts, mfaAttempts } from '../../src/routes/auth';
 
-const app: Application = createApp();
-beforeAll(() => { createTables(testDb); runMigrations(testDb); });
-beforeEach(() => { resetTestDb(testDb); loginAttempts.clear(); mfaAttempts.clear(); });
-afterAll(() => { testDb.close(); });
+let nestApp: INestApplication;
+let app: Application;
+beforeAll(async () => {
+  createTables(testDb);
+  runMigrations(testDb);
+  nestApp = await buildApp();
+  app = nestApp.getHttpAdapter().getInstance();
+});
+beforeEach(() => { resetTestDb(testDb); resetRateLimits(nestApp); });
+afterAll(async () => {
+  await nestApp.close();
+  testDb.close();
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // List days (DAY-001, DAY-002)
@@ -501,5 +515,47 @@ describe('Accommodations', () => {
       'SELECT id FROM reservations WHERE id = ?'
     ).get(reservationBefore.id);
     expect(reservationAfter).toBeUndefined();
+  });
+
+  it('ACCOM-006 — DELETE accommodation also removes its linked budget item (issue #933)', async () => {
+    const { user } = createUser(testDb);
+    const trip = createTrip(testDb, user.id, { title: 'Hotel Budget Trip' });
+    const day1 = createDay(testDb, trip.id, { date: '2026-11-01' });
+    const day2 = createDay(testDb, trip.id, { date: '2026-11-03' });
+    const place = createPlace(testDb, trip.id, { name: 'Grand Hotel' });
+
+    // Create a hotel reservation that creates an accommodation and a linked budget item
+    const createRes = await request(app)
+      .post(`/api/trips/${trip.id}/reservations`)
+      .set('Cookie', authCookie(user.id))
+      .send({
+        title: 'Grand Hotel Stay',
+        type: 'hotel',
+        day_id: day1.id,
+        create_accommodation: { place_id: place.id, start_day_id: day1.id, end_day_id: day2.id },
+        create_budget_entry: { total_price: 450, category: 'Accommodation' },
+      });
+    expect(createRes.status).toBe(201);
+
+    const accommodationId = testDb.prepare(
+      'SELECT id FROM day_accommodations WHERE trip_id = ?'
+    ).get(trip.id) as any;
+    expect(accommodationId).toBeDefined();
+
+    const budgetBefore = testDb.prepare(
+      'SELECT id FROM budget_items WHERE trip_id = ?'
+    ).get(trip.id);
+    expect(budgetBefore).toBeDefined();
+
+    // Delete via the accommodation endpoint (the primary bug path)
+    const delRes = await request(app)
+      .delete(`/api/trips/${trip.id}/accommodations/${accommodationId.id}`)
+      .set('Cookie', authCookie(user.id));
+    expect(delRes.status).toBe(200);
+
+    const budgetAfter = testDb.prepare(
+      'SELECT id FROM budget_items WHERE trip_id = ?'
+    ).get(trip.id);
+    expect(budgetAfter).toBeUndefined();
   });
 });

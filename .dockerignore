@@ -2,6 +2,7 @@ node_modules
 client/node_modules
 server/node_modules
 client/dist
+shared/dist
 data
 uploads
 .git
@@ -31,6 +32,7 @@ server/tests/
 server/vitest.config.ts
 server/reset-admin.js
 **/*.test.ts
+**/*.spec.ts
 wiki/
 scripts/
 charts/

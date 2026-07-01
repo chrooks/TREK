@@ -1,4 +1,4 @@
-// FE-PLANNER-RESMODAL-001 to FE-PLANNER-RESMODAL-035
+// FE-PLANNER-RESMODAL-001 to FE-PLANNER-RESMODAL-052
 import { render, screen, waitFor, fireEvent } from '../../../tests/helpers/render';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
@@ -120,7 +120,7 @@ describe('ReservationModal', () => {
     render(<ReservationModal {...defaultProps} />);
     const eventBtn = screen.getByRole('button', { name: /Event/i });
     await userEvent.click(eventBtn);
-    expect(eventBtn).toHaveStyle({ background: 'var(--text-primary)' });
+    expect(eventBtn).toHaveClass('bg-[var(--text-primary)]');
   });
 
   it('FE-PLANNER-RESMODAL-008: hotel type shows check-in/check-out time fields', async () => {
@@ -343,54 +343,49 @@ describe('ReservationModal', () => {
 
   // ── Budget addon ─────────────────────────────────────────────────────────────
 
-  it('FE-PLANNER-RESMODAL-024: budget section visible when budget addon is enabled', () => {
+  it('FE-PLANNER-RESMODAL-024: costs section (create expense) visible when budget addon is enabled', () => {
     seedStore(useAddonStore, {
       addons: [{ id: 'budget', name: 'Budget', type: 'budget', icon: '', enabled: true }],
       loaded: true,
     });
     render(<ReservationModal {...defaultProps} />);
-    expect(screen.getByText(/^Price$/i)).toBeInTheDocument();
-    expect(screen.getByText(/Budget category/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Create expense/i })).toBeInTheDocument();
   });
 
-  it('FE-PLANNER-RESMODAL-025: budget price input accepts valid decimal', async () => {
+  it('FE-PLANNER-RESMODAL-025: create-expense saves the booking (no create_budget_entry) then opens the Costs editor', async () => {
     seedStore(useAddonStore, {
       addons: [{ id: 'budget', name: 'Budget', type: 'budget', icon: '', enabled: true }],
       loaded: true,
     });
-    render(<ReservationModal {...defaultProps} />);
-    const priceInput = screen.getByPlaceholderText('0.00');
-    await userEvent.type(priceInput, '99.99');
-    expect((priceInput as HTMLInputElement).value).toBe('99.99');
-  });
-
-  it('FE-PLANNER-RESMODAL-026: budget hint shown when price > 0', async () => {
-    seedStore(useAddonStore, {
-      addons: [{ id: 'budget', name: 'Budget', type: 'budget', icon: '', enabled: true }],
-      loaded: true,
-    });
-    render(<ReservationModal {...defaultProps} />);
-    const priceInput = screen.getByPlaceholderText('0.00');
-    await userEvent.type(priceInput, '50');
-    expect(screen.getByText(/budget entry will be created/i)).toBeInTheDocument();
-  });
-
-  it('FE-PLANNER-RESMODAL-027: budget fields included in onSave when price is set', async () => {
-    seedStore(useAddonStore, {
-      addons: [{ id: 'budget', name: 'Budget', type: 'budget', icon: '', enabled: true }],
-      loaded: true,
-    });
-    const onSave = vi.fn().mockResolvedValue(undefined);
-    render(<ReservationModal {...defaultProps} onSave={onSave} />);
+    const onSave = vi.fn().mockResolvedValue({ id: 55 });
+    const onOpenExpense = vi.fn();
+    render(<ReservationModal {...defaultProps} onSave={onSave} onOpenExpense={onOpenExpense} />);
 
     await userEvent.type(screen.getByPlaceholderText(/e\.g\. Lufthansa/i), 'Hotel Paris');
-    await userEvent.type(screen.getByPlaceholderText('0.00'), '120');
-    await userEvent.click(screen.getByRole('button', { name: /^Add$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /Create expense/i }));
 
     await waitFor(() => expect(onSave).toHaveBeenCalled());
-    expect(onSave).toHaveBeenCalledWith(
-      expect.objectContaining({ create_budget_entry: expect.objectContaining({ total_price: 120 }) })
+    expect(onSave).not.toHaveBeenCalledWith(expect.objectContaining({ create_budget_entry: expect.anything() }));
+    await waitFor(() =>
+      expect(onOpenExpense).toHaveBeenCalledWith(
+        expect.objectContaining({ prefill: expect.objectContaining({ reservationId: 55 }) })
+      )
     );
+  });
+
+  it('FE-PLANNER-RESMODAL-026: linked expense summary shown for a booking with a linked cost', () => {
+    seedStore(useAddonStore, {
+      addons: [{ id: 'budget', name: 'Budget', type: 'budget', icon: '', enabled: true }],
+      loaded: true,
+    });
+    seedStore(useTripStore, {
+      trip: buildTrip({ id: 1 }),
+      budgetItems: [
+        { id: 7, trip_id: 1, name: 'Hotel deposit', total_price: 120, currency: 'EUR', category: 'accommodation', reservation_id: 9, members: [], payers: [], persons: 1, expense_date: null, paid_by_user_id: null },
+      ],
+    });
+    render(<ReservationModal {...defaultProps} reservation={buildReservation({ id: 9, type: 'hotel', title: 'Hotel Paris' })} />);
+    expect(screen.getByText('Hotel deposit')).toBeInTheDocument();
   });
 
   // ── File upload ───────────────────────────────────────────────────────────────
@@ -599,22 +594,6 @@ describe('ReservationModal', () => {
     expect(filePickerItem).toBeInTheDocument();
   });
 
-  it('FE-PLANNER-RESMODAL-044: budget category dropdown options include existing categories', () => {
-    seedStore(useAddonStore, {
-      addons: [{ id: 'budget', name: 'Budget', type: 'budget', icon: '', enabled: true }],
-      loaded: true,
-    });
-    seedStore(useTripStore, {
-      trip: buildTrip({ id: 1 }),
-      budgetItems: [
-        { id: 1, trip_id: 1, name: 'Flight ticket', amount: 300, currency: 'EUR', category: 'Transport', paid_by: null, persons: 1, members: [], expense_date: null },
-      ],
-    });
-    render(<ReservationModal {...defaultProps} />);
-    // Budget section is visible
-    expect(screen.getByText(/Budget category/i)).toBeInTheDocument();
-  });
-
   it('FE-PLANNER-RESMODAL-045: tour type shows time pickers', async () => {
     render(<ReservationModal {...defaultProps} />);
     await userEvent.click(screen.getByRole('button', { name: /^Tour$/i }));
@@ -630,31 +609,6 @@ describe('ReservationModal', () => {
     await userEvent.type(screen.getByPlaceholderText(/e\.g\. Lufthansa/i), 'Misc item');
     await userEvent.click(screen.getByRole('button', { name: /^Add$/i }));
     await waitFor(() => expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ type: 'other' })));
-  });
-
-  it('FE-PLANNER-RESMODAL-047: clicking budget category select changes the value', async () => {
-    seedStore(useAddonStore, {
-      addons: [{ id: 'budget', name: 'Budget', type: 'budget', icon: '', enabled: true }],
-      loaded: true,
-    });
-    seedStore(useTripStore, {
-      trip: buildTrip({ id: 1 }),
-      budgetItems: [
-        { id: 1, trip_id: 1, name: 'Ticket', amount: 100, currency: 'EUR', category: 'Transport', paid_by: null, persons: 1, members: [], expense_date: null },
-      ],
-    });
-    render(<ReservationModal {...defaultProps} />);
-
-    // Open the budget category CustomSelect (shows placeholder "Auto (from booking type)")
-    const budgetCategoryBtn = screen.getByText(/Auto \(from booking type\)/i).closest('button')!;
-    await userEvent.click(budgetCategoryBtn);
-
-    // Click the "Transport" category option
-    await waitFor(() => expect(screen.getByText('Transport')).toBeInTheDocument());
-    await userEvent.click(screen.getByText('Transport'));
-
-    // The select should now show "Transport"
-    expect(screen.getByText('Transport')).toBeInTheDocument();
   });
 
   it('FE-PLANNER-RESMODAL-048: clicking attach file button triggers file input', async () => {
@@ -722,5 +676,104 @@ describe('ReservationModal', () => {
     expect(onSave).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'hotel' })
     );
+  });
+
+  // ── Hotel day-range picker — non-monotonic IDs (issue #929) ───────────────
+  // Mirrors DayDetailPanel-056/057 for the ReservationModal path.
+  // ID layout: day_number 1-9 → IDs 17-25, day_number 10-16 → IDs 1-7.
+
+  function buildNonMonotonicDaysRM() {
+    return [
+      buildDay({ id: 17, trip_id: 1, date: '2026-04-30', day_number: 1 }),
+      buildDay({ id: 18, trip_id: 1, date: '2026-05-01', day_number: 2 }),
+      buildDay({ id: 19, trip_id: 1, date: '2026-05-02', day_number: 3 }),
+      buildDay({ id: 20, trip_id: 1, date: '2026-05-03', day_number: 4 }),
+      buildDay({ id: 21, trip_id: 1, date: '2026-05-04', day_number: 5 }),
+      buildDay({ id: 22, trip_id: 1, date: '2026-05-05', day_number: 6 }),
+      buildDay({ id: 23, trip_id: 1, date: '2026-05-06', day_number: 7 }),
+      buildDay({ id: 24, trip_id: 1, date: '2026-05-07', day_number: 8 }),
+      buildDay({ id: 25, trip_id: 1, date: '2026-05-08', day_number: 9 }),
+      buildDay({ id: 1,  trip_id: 1, date: '2026-05-09', day_number: 10 }),
+      buildDay({ id: 2,  trip_id: 1, date: '2026-05-10', day_number: 11 }),
+      buildDay({ id: 3,  trip_id: 1, date: '2026-05-11', day_number: 12 }),
+      buildDay({ id: 4,  trip_id: 1, date: '2026-05-12', day_number: 13 }),
+      buildDay({ id: 5,  trip_id: 1, date: '2026-05-13', day_number: 14 }),
+      buildDay({ id: 6,  trip_id: 1, date: '2026-05-14', day_number: 15 }),
+      buildDay({ id: 7,  trip_id: 1, date: '2026-05-15', day_number: 16 }),
+    ] as any[];
+  }
+
+  it('FE-PLANNER-RESMODAL-050: non-monotonic IDs — end picker with low ID does not clobber start', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    const days = buildNonMonotonicDaysRM();
+
+    render(<ReservationModal {...defaultProps} onSave={onSave} days={days} />);
+
+    // Switch to hotel type
+    await userEvent.click(screen.getByRole('button', { name: /^Accommodation$/i }));
+    await userEvent.type(screen.getByPlaceholderText(/e\.g\. Lufthansa/i), 'Overlap Hotel');
+
+    // Open start picker (first "Select day" trigger) and select Day 1 (id=17)
+    const startTrigger = () => screen.getAllByRole('button').filter(b => b.textContent?.includes('Select day') || b.textContent?.startsWith('Day '))[0];
+    await userEvent.click(startTrigger());
+    await userEvent.click(screen.getAllByRole('button').find(b => b.textContent?.startsWith('Day 1') && !b.textContent?.startsWith('Day 1 ') || b.textContent?.trim() === 'Day 1')!);
+
+    // Open end picker and select Day 16 (id=7, low ID but last positionally)
+    const endTrigger = () => screen.getAllByRole('button').filter(b => b.textContent?.includes('Select day') || /^Day \d+/.test(b.textContent?.trim() ?? ''))[1];
+    await userEvent.click(endTrigger());
+    await userEvent.click(screen.getAllByRole('button').find(b => b.textContent?.startsWith('Day 16'))!);
+
+    await userEvent.click(screen.getByRole('button', { name: /^Add$/i }));
+
+    await waitFor(() => expect(onSave).toHaveBeenCalled());
+    const saved = onSave.mock.calls[0][0];
+    // start must stay id=17 (Day 1) — old Math.max would clobber it to id=7
+    expect(saved.create_accommodation?.start_day_id).toBe(17);
+    expect(saved.create_accommodation?.end_day_id).toBe(7);
+  });
+
+  it('FE-PLANNER-RESMODAL-051: non-monotonic IDs — start picker does not collapse end when start has high ID', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    const days = buildNonMonotonicDaysRM();
+
+    render(<ReservationModal {...defaultProps} onSave={onSave} days={days} />);
+
+    await userEvent.click(screen.getByRole('button', { name: /^Accommodation$/i }));
+    await userEvent.type(screen.getByPlaceholderText(/e\.g\. Lufthansa/i), 'Span Hotel');
+
+    // Set end to Day 16 (id=7) first
+    const endTrigger = () => screen.getAllByRole('button').filter(b => b.textContent?.includes('Select day') || /^Day \d+/.test(b.textContent?.trim() ?? ''))[1];
+    await userEvent.click(endTrigger());
+    await userEvent.click(screen.getAllByRole('button').find(b => b.textContent?.startsWith('Day 16'))!);
+
+    // Set start to Day 9 (id=25, high ID but earlier by position than Day 16)
+    // Old code: Math.max(25, 7) = 25 → end collapses to Day 9.
+    // New code: position(id=25)=8 < position(id=7)=15 → end stays id=7.
+    const startTrigger = () => screen.getAllByRole('button').filter(b => b.textContent?.includes('Select day') || /^Day \d+/.test(b.textContent?.trim() ?? ''))[0];
+    await userEvent.click(startTrigger());
+    await userEvent.click(screen.getAllByRole('button').find(b => b.textContent?.startsWith('Day 9'))!);
+
+    await userEvent.click(screen.getByRole('button', { name: /^Add$/i }));
+
+    await waitFor(() => expect(onSave).toHaveBeenCalled());
+    const saved = onSave.mock.calls[0][0];
+    expect(saved.create_accommodation?.start_day_id).toBe(25); // Day 9
+    expect(saved.create_accommodation?.end_day_id).toBe(7);    // Day 16 — must NOT have collapsed
+  });
+
+  it('FE-PLANNER-RESMODAL-052: hotel with no accommodation_id sends assignment_id as null (issue #934)', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    // Hotel reservation with assignment_id set but no accommodation
+    const res = buildReservation({
+      id: 10, title: 'Stale Hotel', type: 'hotel', status: 'confirmed',
+      accommodation_id: null, assignment_id: 99,
+    } as any);
+
+    render(<ReservationModal {...defaultProps} onSave={onSave} reservation={res} />);
+
+    await userEvent.click(screen.getByRole('button', { name: /^Update$/i }));
+
+    await waitFor(() => expect(onSave).toHaveBeenCalled());
+    expect(onSave.mock.calls[0][0].assignment_id).toBeNull();
   });
 });

@@ -34,6 +34,10 @@ env:
   # When "true": adds includeSubDomains to the HSTS header. Only effective when HSTS is active. Leave "false" if sibling subdomains still run over plain HTTP.
   # COOKIE_SECURE: "true"
   # Auto-derived (true in production or when FORCE_HTTPS=true). Set "false" to force cookies over plain HTTP. Not recommended for production.
+  # SESSION_DURATION: "24h"
+  # How long a login session stays valid when "Remember me" is unchecked (the default): trek_session JWT exp + a browser-session cookie. Accepts 1h, 12h, 7d, 30d, 90d. Defaults to 24h.
+  # SESSION_DURATION_REMEMBER: "30d"
+  # Session length when "Remember me" is ticked: a longer-lived JWT + persistent cookie that survives browser restarts. Same format as SESSION_DURATION. Defaults to 30d.
   # TRUST_PROXY: "1"
   # Trusted proxy hops for X-Forwarded-For/X-Forwarded-Proto. Defaults to 1 in production. Must be set for FORCE_HTTPS to work.
   # ALLOW_INTERNAL_NETWORK: "false"
@@ -63,6 +67,12 @@ env:
   # Max MCP API requests per user per minute. Defaults to 300.
   # MCP_MAX_SESSION_PER_USER: "20"
   # Max concurrent MCP sessions per user. Defaults to 20.
+  # OVERPASS_URL: ""
+  # Custom Overpass endpoint(s) for the map POI "explore" search, comma-separated. When set, REPLACES the bundled
+  # public mirrors — point it at an internal/self-hosted Overpass instance when the public mirrors are unreachable
+  # from the cluster (e.g. locked-down egress). Non-http(s) entries are ignored.
+  # OVERPASS_TIMEOUT_MS: "12000"
+  # Per-endpoint timeout (ms) for Overpass POI requests. Raise it for a slow self-hosted Overpass instance. Defaults to 12000.
 
 
 # Secret environment variables stored in a Kubernetes Secret.
@@ -94,8 +104,13 @@ persistence:
   enabled: true
   data:
     size: 1Gi
+    # Leave empty to use the cluster's default StorageClass; set to bind a specific class.
+    storageClassName: ""
+    annotations: {}
   uploads:
     size: 1Gi
+    storageClassName: ""
+    annotations: {}
 
 resources:
   requests:

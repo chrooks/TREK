@@ -84,6 +84,22 @@ const transportReservation = {
   metadata: JSON.stringify({ airline: 'Air Italia', flight_number: 'AI123', departure_airport: 'CDG', arrival_airport: 'FCO' }),
 } as any
 
+const multiLegFlight = {
+  id: 401,
+  title: 'Flight to Tokyo',
+  type: 'flight',
+  day_id: 10,
+  reservation_time: '2025-06-01T08:00:00',
+  confirmation_number: 'XYZ789',
+  metadata: JSON.stringify({
+    legs: [
+      { from: 'FRA', to: 'BER', airline: 'Lufthansa', flight_number: 'LH1' },
+      { from: 'BER', to: 'HND', airline: 'Lufthansa', flight_number: 'LH2' },
+    ],
+    departure_airport: 'FRA', arrival_airport: 'HND', airline: 'Lufthansa', flight_number: 'LH1',
+  }),
+} as any
+
 const richArgs = {
   trip: { id: 10, title: 'Italy Trip', description: 'Summer adventure', cover_image: '/uploads/cover.jpg' } as any,
   days: [dayWithPlaces],
@@ -196,6 +212,16 @@ describe('downloadTripPDF', () => {
     const iframe = getIframe()
     expect(iframe!.srcdoc).toContain('Flight to Rome')
     expect(iframe!.srcdoc).toContain('ABC123')
+    // Single-leg flight keeps its full-route subtitle.
+    expect(iframe!.srcdoc).toContain('Air Italia · AI123 · CDG → FCO')
+  })
+
+  it('FE-COMP-TRIPPDF-013b: renders every flight number for a multi-leg flight', async () => {
+    await downloadTripPDF({ ...richArgs, reservations: [multiLegFlight] })
+    const iframe = getIframe()
+    // One subtitle line per leg, each with its own flight number and segment route.
+    expect(iframe!.srcdoc).toContain('Lufthansa · LH1 · FRA → BER')
+    expect(iframe!.srcdoc).toContain('Lufthansa · LH2 · BER → HND')
   })
 
   it('FE-COMP-TRIPPDF-014: renders cover image when trip has cover_image', async () => {
@@ -259,6 +285,23 @@ describe('downloadTripPDF', () => {
     expect(iframe!.srcdoc).toContain('colosseum.jpg')
   })
 
+  it('FE-COMP-TRIPPDF-018b: renders a persisted place-photo proxy image_url as an <img>, not the category icon (#1130)', async () => {
+    const args = {
+      ...richArgs,
+      assignments: {
+        '10': [{
+          ...assignmentForDay,
+          place: { ...placeWithDetails, image_url: '/api/maps/place-photo/ChIJabc/bytes' },
+        }],
+      } as any,
+    }
+    await downloadTripPDF(args)
+    const iframe = getIframe()
+    // The proxy path (no file extension) must still embed as an absolute <img>.
+    expect(iframe!.srcdoc).toContain('http://localhost:3000/api/maps/place-photo/ChIJabc/bytes')
+    expect(iframe!.srcdoc).toContain('class="place-thumb"')
+  })
+
   it('FE-COMP-TRIPPDF-019: fetches google place photos for places with google_place_id', async () => {
     let photoCalled = false
     server.use(
@@ -278,6 +321,28 @@ describe('downloadTripPDF', () => {
     }
     await downloadTripPDF(argsWithGooglePlace)
     expect(photoCalled).toBe(true)
+  })
+
+  it('FE-COMP-TRIPPDF-019b: fetches photos for OSM places via osm_id recovered from the places pool (#1130)', async () => {
+    let fetchedId: string | null = null
+    server.use(
+      http.get('/api/maps/place-photo/:placeId', ({ params }) => {
+        fetchedId = params.placeId as string
+        return HttpResponse.json({ photoUrl: 'https://example.com/osm.jpg' })
+      }),
+    )
+    // The assignment projection drops osm_id; the full place in `places` carries it.
+    const osmPlace = { ...placeWithDetails, id: 101, image_url: null, google_place_id: null, osm_id: 'node/240109189', lat: 41.89, lng: 12.49 }
+    const args = {
+      ...richArgs,
+      places: [osmPlace],
+      assignments: {
+        '10': [{ ...assignmentForDay, id: 201, place_id: 101, place: { ...placeWithDetails, id: 101, image_url: null, google_place_id: null } }],
+      } as any,
+    }
+    await downloadTripPDF(args)
+    // osm_id is used as the photo key (not the coords fallback), proving the pool lookup works.
+    expect(fetchedId).toBe('node/240109189')
   })
 
   it('FE-COMP-TRIPPDF-020: renders empty day message when no items assigned', async () => {

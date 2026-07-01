@@ -41,6 +41,14 @@ vi.mock('../../../src/config', () => ({
   updateJwtSecret: () => {},
 }));
 
+// Spy on the photo-cache reclaim hook so delete tests assert the wiring without
+// touching disk. The removal logic itself is covered in placePhotoCache.test.ts.
+const { removeIfUnreferencedSpy } = vi.hoisted(() => ({ removeIfUnreferencedSpy: vi.fn() }));
+vi.mock('../../../src/services/placePhotoCache', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../src/services/placePhotoCache')>()),
+  removeIfUnreferenced: removeIfUnreferencedSpy,
+}));
+
 import { createTables } from '../../../src/db/schema';
 import { runMigrations } from '../../../src/db/migrations';
 import { resetTestDb } from '../../helpers/test-db';
@@ -252,6 +260,18 @@ describe('deletePlace', () => {
     expect(remaining).toHaveLength(1);
     expect(remaining[0].id).toBe(p1.id);
   });
+
+  it('PLACE-SVC-019b — reclaims the photo cache for the deleted place', () => {
+    removeIfUnreferencedSpy.mockClear();
+    const { user } = createUser(testDb);
+    const trip = createTrip(testDb, user.id);
+    const place = createPlace(testDb, trip.id, { name: 'With Photo' }) as any;
+    testDb.prepare('UPDATE places SET google_place_id = ? WHERE id = ?').run('ChIJgid', place.id);
+
+    deletePlace(String(trip.id), String(place.id));
+
+    expect(removeIfUnreferencedSpy).toHaveBeenCalledWith('ChIJgid');
+  });
 });
 
 // ── importGpx ─────────────────────────────────────────────────────────────────
@@ -346,6 +366,39 @@ describe('importGpx', () => {
     const result = importGpx(String(trip.id), gpx);
     expect(result).toBeNull();
   });
+
+  it('PLACE-SVC-037 — multiple unnamed tracks in one file get distinct names instead of collapsing to one', () => {
+    const { user } = createUser(testDb);
+    const trip = createTrip(testDb, user.id);
+    const gpx = Buffer.from(`<?xml version="1.0"?><gpx version="1.1">
+      <trk><trkseg>
+        <trkpt lat="48.8566" lon="2.3522"></trkpt>
+        <trkpt lat="48.8570" lon="2.3530"></trkpt>
+      </trkseg></trk>
+      <trk><trkseg>
+        <trkpt lat="40.0000" lon="-3.0000"></trkpt>
+        <trkpt lat="40.1000" lon="-3.1000"></trkpt>
+      </trkseg></trk>
+    </gpx>`);
+    const result = importGpx(String(trip.id), gpx) as any;
+    expect(result.places).toHaveLength(2);
+    const names = result.places.map((p: any) => p.name);
+    expect(new Set(names).size).toBe(2);
+  });
+
+  it('PLACE-SVC-038 — unnamed tracks fall back to the source filename', () => {
+    const { user } = createUser(testDb);
+    const trip = createTrip(testDb, user.id);
+    const gpx = Buffer.from(`<?xml version="1.0"?><gpx version="1.1">
+      <trk><trkseg>
+        <trkpt lat="48.8566" lon="2.3522"></trkpt>
+        <trkpt lat="48.8570" lon="2.3530"></trkpt>
+      </trkseg></trk>
+    </gpx>`);
+    const result = importGpx(String(trip.id), gpx, { defaultName: 'morning-hike.gpx' }) as any;
+    expect(result.places).toHaveLength(1);
+    expect(result.places[0].name).toBe('morning-hike');
+  });
 });
 
 // ── importGoogleList ──────────────────────────────────────────────────────────
@@ -361,6 +414,15 @@ describe('importGoogleList', () => {
     const result = await importGoogleList(String(trip.id), 'https://example.com/no-id-here') as any;
     expect(result.error).toMatch(/Could not extract list ID/);
     expect(result.status).toBe(400);
+  });
+
+  it('PLACE-SVC-026b — a single-place link gives a guiding error instead of the generic one (#1304)', async () => {
+    const { user } = createUser(testDb);
+    const trip = createTrip(testDb, user.id);
+    const url = 'https://www.google.com/maps/place/Eiffel+Tower/@48.8584,2.2945,17z/data=!3m1';
+    const result = await importGoogleList(String(trip.id), url) as any;
+    expect(result.status).toBe(400);
+    expect(result.error).toMatch(/single place/i);
   });
 
   it('PLACE-SVC-027 — returns error when Google Maps API responds with non-ok status', async () => {
@@ -394,6 +456,57 @@ describe('importGoogleList', () => {
     expect(result.places).toHaveLength(2);
     expect(result.places[0].name).toBe('Paris');
     expect(result.places[1].name).toBe('London');
+  });
+
+  it('PLACE-SVC-028b — stores a Google Maps ftid separately from google_place_id', async () => {
+    const { user } = createUser(testDb);
+    const trip = createTrip(testDb, user.id);
+
+    const listPayload = [
+      [null, null, null, null, 'My Test List', null, null, null, [
+        [null, [null, null, null, null, '878 Weber St N', [null, null, 43.5118527, -80.5542617], ['-8634542354666695567', '-8822026229683971437']], "St. Jacobs Farmers' Market"],
+      ]],
+    ];
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      text: async () => 'prefix\n' + JSON.stringify(listPayload),
+    }));
+
+    const url = 'https://www.google.com/maps/placelists/list/ABC123DEF456';
+    const result = await importGoogleList(String(trip.id), url) as any;
+
+    expect(result.places).toHaveLength(1);
+    expect(result.places[0].google_place_id).toBeNull();
+    expect(result.places[0].google_ftid).toBe('0x882bf179e806d471:0x8591dde29c821a93');
+  });
+
+  it('PLACE-SVC-028c — backfills google_ftid when re-import skips a duplicate', async () => {
+    const { user } = createUser(testDb);
+    const trip = createTrip(testDb, user.id);
+    const existing = createPlace(testDb, trip.id, {
+      name: "St. Jacobs Farmers' Market",
+      lat: 43.5118527,
+      lng: -80.5542617,
+    }) as any;
+
+    const listPayload = [
+      [null, null, null, null, 'My Test List', null, null, null, [
+        [null, [null, null, null, null, '878 Weber St N', [null, null, 43.5118527, -80.5542617], ['-8634542354666695567', '-8822026229683971437']], "St. Jacobs Farmers' Market"],
+      ]],
+    ];
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      text: async () => 'prefix\n' + JSON.stringify(listPayload),
+    }));
+
+    const url = 'https://www.google.com/maps/placelists/list/ABC123DEF456';
+    const result = await importGoogleList(String(trip.id), url) as any;
+    const row = testDb.prepare('SELECT google_place_id, google_ftid FROM places WHERE id = ?').get(existing.id) as any;
+
+    expect(result.places).toHaveLength(0);
+    expect(result.skipped).toBe(1);
+    expect(row.google_place_id).toBeNull();
+    expect(row.google_ftid).toBe('0x882bf179e806d471:0x8591dde29c821a93');
   });
 
   it('PLACE-SVC-029 — returns error when list items array is empty', async () => {

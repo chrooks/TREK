@@ -9,72 +9,66 @@ import { useToast } from '../shared/Toast'
 import { Search, Paperclip, X, AlertTriangle, Loader2 } from 'lucide-react'
 import { useTranslation } from '../../i18n'
 import CustomTimePicker from '../shared/CustomTimePicker'
+import { DEFAULT_FORM, isGoogleMapsUrl, type PlaceFormData } from './PlaceFormModal.helpers'
+import { getApiErrorMessage } from '../../utils/apiError'
 import type { Place, Category, Assignment } from '../../types'
 
-interface PlaceFormData {
-  name: string
-  description: string
-  address: string
-  lat: string
-  lng: string
-  category_id: string
-  place_time: string
-  end_time: string
-  notes: string
-  transport_mode: string
-  website: string
-}
-
-function isGoogleMapsUrl(input: string): boolean {
-  try {
-    const { hostname, pathname } = new URL(input.trim())
-    const h = hostname.toLowerCase()
-    // maps.app.goo.gl, goo.gl/maps
-    if (h === 'maps.app.goo.gl') return true
-    if (h === 'goo.gl' && pathname.startsWith('/maps')) return true
-    // maps.google.* (e.g. maps.google.com, maps.google.co.uk)
-    // Must be maps.google.<tld> or maps.google.<sld>.<tld> — reject maps.google.evil.com
-    if (/^maps\.google\.[a-z]{2,3}(\.[a-z]{2})?$/.test(h)) return true
-    // google.*/maps (e.g. google.com/maps, www.google.co.uk/maps)
-    const bare = h.startsWith('www.') ? h.slice(4) : h
-    if (/^google\.[a-z]{2,3}(\.[a-z]{2})?$/.test(bare) && pathname.startsWith('/maps')) return true
-    return false
-  } catch {
-    return false
-  }
-}
-
-const DEFAULT_FORM: PlaceFormData = {
-  name: '',
-  description: '',
-  address: '',
-  lat: '',
-  lng: '',
-  category_id: '',
-  place_time: '',
-  end_time: '',
-  notes: '',
-  transport_mode: 'walking',
-  website: '',
+// The submit payload mirrors the form, but lat/lng are parsed to numbers and
+// category_id is normalised, plus any files chosen before the place existed.
+export interface PlaceSubmitData extends Omit<PlaceFormData, 'lat' | 'lng' | 'category_id'> {
+  lat: number | null
+  lng: number | null
+  category_id: string | null
+  _pendingFiles?: File[]
 }
 
 interface PlaceFormModalProps {
   isOpen: boolean
   onClose: () => void
-  onSave: (data: PlaceFormData, files?: File[]) => Promise<void> | void
+  onSave: (data: PlaceSubmitData, files?: File[]) => Promise<void> | void
   place: Place | null
-  prefillCoords?: { lat: number; lng: number; name?: string; address?: string } | null
+  prefillCoords?: { lat: number; lng: number; name?: string; address?: string; website?: string; phone?: string; osm_id?: string } | null
   tripId: number
   categories: Category[]
-  onCategoryCreated: (category: Category) => void
+  onCategoryCreated: (category: { name: string; color?: string; icon?: string }) => Promise<Category> | undefined
   assignmentId: number | null
   dayAssignments?: Assignment[]
 }
 
-export default function PlaceFormModal({
+
+/** Place create/edit form state: maps search + Google-URL resolve + autocomplete,
+ * category creation, file attachments and submit. Keeps PlaceFormModal a thin
+ * render over the form fields. */
+
+// #1152: a manually-added place is treated as a likely duplicate of an existing
+// trip place if it shares the Google Place ID, the (case-insensitive) name, or
+// near-identical coordinates (~11 m). Mirrors the server-side import dedup.
+const DUP_COORD_TOLERANCE = 0.0001
+function findDuplicatePlace(
+  form: PlaceFormData,
+  places: { name?: string | null; lat?: number | null; lng?: number | null; google_place_id?: string | null }[],
+): { name?: string | null } | null {
+  const name = (form.name || '').trim().toLowerCase()
+  const gid = (form.google_place_id || '').trim()
+  const lat = form.lat ? parseFloat(form.lat) : null
+  const lng = form.lng ? parseFloat(form.lng) : null
+  for (const p of places || []) {
+    if (gid && p.google_place_id && p.google_place_id === gid) return p
+    if (name && p.name && p.name.trim().toLowerCase() === name) return p
+    if (
+      lat != null && lng != null && p.lat != null && p.lng != null &&
+      Math.abs(Number(p.lat) - lat) <= DUP_COORD_TOLERANCE &&
+      Math.abs(Number(p.lng) - lng) <= DUP_COORD_TOLERANCE
+    ) return p
+  }
+  return null
+}
+
+function usePlaceFormModal(props: PlaceFormModalProps) {
+  const {
   isOpen, onClose, onSave, place, prefillCoords, tripId, categories,
   onCategoryCreated, assignmentId, dayAssignments = [],
-}: PlaceFormModalProps) {
+  } = props
   const [form, setForm] = useState(DEFAULT_FORM)
   const [mapsSearch, setMapsSearch] = useState('')
   const [mapsResults, setMapsResults] = useState([])
@@ -82,6 +76,7 @@ export default function PlaceFormModal({
   const [newCategoryName, setNewCategoryName] = useState('')
   const [showNewCategory, setShowNewCategory] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
+  const [duplicateWarning, setDuplicateWarning] = useState<string | null>(null)
   const [pendingFiles, setPendingFiles] = useState([])
   const fileRef = useRef(null)
   const [acSuggestions, setAcSuggestions] = useState<{ placeId: string; mainText: string; secondaryText: string }[]>([])
@@ -97,15 +92,20 @@ export default function PlaceFormModal({
 
   useEffect(() => {
     if (place) {
+      // Times are stored per day-assignment, not on the pool place. When an
+      // assignment is in context (itinerary edit, or a single-assignment pool
+      // edit) read the times off its embedded place; fall back to the place prop.
+      const assignment = assignmentId ? dayAssignments.find(a => a.id === assignmentId) : null
+      const timeSource = assignment?.place ?? place
       setForm({
         name: place.name || '',
         description: place.description || '',
         address: place.address || '',
-        lat: place.lat || '',
-        lng: place.lng || '',
-        category_id: place.category_id || '',
-        place_time: place.place_time || '',
-        end_time: place.end_time || '',
+        lat: place.lat != null ? String(place.lat) : '',
+        lng: place.lng != null ? String(place.lng) : '',
+        category_id: place.category_id != null ? String(place.category_id) : '',
+        place_time: timeSource.place_time || '',
+        end_time: timeSource.end_time || '',
         notes: place.notes || '',
         transport_mode: place.transport_mode || 'walking',
         website: place.website || '',
@@ -117,12 +117,19 @@ export default function PlaceFormModal({
         lng: String(prefillCoords.lng),
         name: prefillCoords.name || '',
         address: prefillCoords.address || '',
+        website: prefillCoords.website || '',
+        phone: prefillCoords.phone || '',
+        osm_id: prefillCoords.osm_id,
       })
     } else {
       setForm(DEFAULT_FORM)
     }
     setPendingFiles([])
-  }, [place, prefillCoords, isOpen])
+    setDuplicateWarning(null)
+    // dayAssignments is a fresh array each render; read it at open-time only and
+    // re-run on identity changes (place/assignmentId/open), not on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [place, prefillCoords, isOpen, assignmentId])
 
   // Derive location bias bounding box from the trip's existing places
   const places = useTripStore((s) => s.places)
@@ -191,7 +198,7 @@ export default function PlaceFormModal({
     }
   }, [mapsSearch, fetchSuggestions])
 
-  const handleChange = (field, value) => {
+  const handleChange = (field: string, value: string) => {
     setForm(prev => ({ ...prev, [field]: value }))
   }
 
@@ -210,6 +217,7 @@ export default function PlaceFormModal({
             address: resolved.address || prev.address,
             lat: String(resolved.lat),
             lng: String(resolved.lng),
+            google_ftid: resolved.google_ftid || prev.google_ftid,
           }))
           setMapsResults([])
           setMapsSearch('')
@@ -220,7 +228,7 @@ export default function PlaceFormModal({
       const result = await mapsApi.search(mapsSearch, language)
       setMapsResults(result.places || [])
     } catch (err: unknown) {
-      toast.error(t('places.mapsSearchError'))
+      toast.error(getApiErrorMessage(err, t('places.mapsSearchError')))
     } finally {
       setIsSearchingMaps(false)
     }
@@ -234,6 +242,7 @@ export default function PlaceFormModal({
       lat: result.lat || prev.lat,
       lng: result.lng || prev.lng,
       google_place_id: result.google_place_id || prev.google_place_id,
+      google_ftid: result.google_ftid || prev.google_ftid,
       osm_id: result.osm_id || prev.osm_id,
       website: result.website || prev.website,
       phone: result.phone || prev.phone,
@@ -250,17 +259,36 @@ export default function PlaceFormModal({
     setForm(prev => ({ ...prev, name: suggestion.mainText }))
     setIsSearchingMaps(true)
     try {
-      const result = await mapsApi.details(suggestion.placeId, language)
-      if (result.place) {
-        handleSelectMapsResult(result.place)
+      // The details lookup is a fragile second hop — it can fail when the
+      // details kill-switch is off, when the OSM Overpass mirror is overloaded,
+      // or on any upstream error. Treat a missing/coordinate-less place as a
+      // miss and fall back to the reliable text-search path the search button
+      // uses (its results already carry coordinates), so dropdown items stay
+      // clickable instead of dead-ending on "Place search failed". (#1192)
+      let place: Record<string, unknown> | null = null
+      try {
+        const result = await mapsApi.details(suggestion.placeId, language)
+        if (result.place && result.place.lat != null && result.place.lng != null) {
+          place = result.place
+        }
+      } catch (err) {
+        console.error('Failed to fetch place details:', err)
+      }
+      if (!place) {
+        const query = [suggestion.mainText, suggestion.secondaryText].filter(Boolean).join(', ')
+        const search = await mapsApi.search(query, language)
+        place = search.places?.[0] ?? null
+      }
+      if (place) {
+        handleSelectMapsResult(place)
       } else {
         setMapsSearch(previousSearch)
         toast.error(t('places.mapsSearchError'))
       }
     } catch (err) {
-      console.error('Failed to fetch place details:', err)
+      console.error('Place suggestion lookup failed:', err)
       setMapsSearch(previousSearch)
-      toast.error(t('places.mapsSearchError'))
+      toast.error(getApiErrorMessage(err, t('places.mapsSearchError')))
     } finally {
       setIsSearchingMaps(false)
     }
@@ -296,7 +324,7 @@ export default function PlaceFormModal({
     if (!newCategoryName.trim()) return
     try {
       const cat = await onCategoryCreated?.({ name: newCategoryName, color: '#6366f1', icon: 'MapPin' })
-      if (cat) setForm(prev => ({ ...prev, category_id: cat.id }))
+      if (cat) setForm(prev => ({ ...prev, category_id: String(cat.id) }))
       setNewCategoryName('')
       setShowNewCategory(false)
     } catch (err: unknown) {
@@ -304,18 +332,18 @@ export default function PlaceFormModal({
     }
   }
 
-  const handleFileAdd = (e) => {
-    const files = Array.from((e.target as HTMLInputElement).files || [])
+  const handleFileAdd = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || [])
     setPendingFiles(prev => [...prev, ...files])
     e.target.value = ''
   }
 
-  const handleRemoveFile = (idx) => {
+  const handleRemoveFile = (idx: number) => {
     setPendingFiles(prev => prev.filter((_, i) => i !== idx))
   }
 
   // Paste support for files/images
-  const handlePaste = (e) => {
+  const handlePaste = (e: React.ClipboardEvent) => {
     if (!canUploadFiles) return
     const items = e.clipboardData?.items
     if (!items) return
@@ -337,6 +365,17 @@ export default function PlaceFormModal({
       toast.error(t('places.nameRequired'))
       return
     }
+    // #1152: only for new places, and only on the first attempt — a second click
+    // (with the warning already showing) is the explicit "add anyway" confirmation.
+    if (!place && !duplicateWarning) {
+      const dup = findDuplicatePlace(form, places)
+      if (dup) {
+        const dupName = dup.name || form.name
+        setDuplicateWarning(dupName)
+        toast.warning(t('places.duplicateExists', { name: dupName }))
+        return
+      }
+    }
     setIsSaving(true)
     try {
       await onSave({
@@ -354,6 +393,124 @@ export default function PlaceFormModal({
     }
   }
 
+  return {
+    isOpen,
+    onClose,
+    onSave,
+    place,
+    prefillCoords,
+    tripId,
+    categories,
+    onCategoryCreated,
+    assignmentId,
+    dayAssignments,
+    form,
+    setForm,
+    mapsSearch,
+    setMapsSearch,
+    mapsResults,
+    setMapsResults,
+    isSearchingMaps,
+    setIsSearchingMaps,
+    newCategoryName,
+    setNewCategoryName,
+    showNewCategory,
+    setShowNewCategory,
+    isSaving,
+    setIsSaving,
+    pendingFiles,
+    setPendingFiles,
+    fileRef,
+    acSuggestions,
+    setAcSuggestions,
+    acHighlight,
+    setAcHighlight,
+    acDebounceRef,
+    acAbortRef,
+    toast,
+    t,
+    language,
+    hasMapsKey,
+    can,
+    tripObj,
+    canUploadFiles,
+    places,
+    locationBias,
+    fetchSuggestions,
+    handleChange,
+    handleMapsSearch,
+    handleSelectMapsResult,
+    handleSelectSuggestion,
+    handleSearchKeyDown,
+    handleCreateCategory,
+    handleFileAdd,
+    handleRemoveFile,
+    handlePaste,
+    hasTimeError,
+    handleSubmit,
+    duplicateWarning,
+  }
+}
+
+export default function PlaceFormModal(props: PlaceFormModalProps) {
+  const S = usePlaceFormModal(props)
+  const {
+    isOpen,
+    onClose,
+    onSave,
+    place,
+    prefillCoords,
+    tripId,
+    categories,
+    onCategoryCreated,
+    assignmentId,
+    dayAssignments,
+    form,
+    setForm,
+    mapsSearch,
+    setMapsSearch,
+    mapsResults,
+    setMapsResults,
+    isSearchingMaps,
+    setIsSearchingMaps,
+    newCategoryName,
+    setNewCategoryName,
+    showNewCategory,
+    setShowNewCategory,
+    isSaving,
+    setIsSaving,
+    pendingFiles,
+    setPendingFiles,
+    fileRef,
+    acSuggestions,
+    setAcSuggestions,
+    acHighlight,
+    setAcHighlight,
+    acDebounceRef,
+    acAbortRef,
+    toast,
+    t,
+    language,
+    hasMapsKey,
+    can,
+    tripObj,
+    canUploadFiles,
+    places,
+    locationBias,
+    fetchSuggestions,
+    handleChange,
+    handleMapsSearch,
+    handleSelectMapsResult,
+    handleSelectSuggestion,
+    handleSearchKeyDown,
+    handleCreateCategory,
+    handleFileAdd,
+    handleRemoveFile,
+    handlePaste,
+    hasTimeError,
+    handleSubmit,
+    duplicateWarning,
+  } = S
   return (
     <Modal
       isOpen={isOpen}
@@ -375,7 +532,7 @@ export default function PlaceFormModal({
             disabled={isSaving || hasTimeError}
             className="px-6 py-2 bg-slate-900 text-white text-sm rounded-lg hover:bg-slate-700 disabled:opacity-60 font-medium"
           >
-            {isSaving ? t('common.saving') : place ? t('common.update') : t('common.add')}
+            {isSaving ? t('common.saving') : place ? t('common.update') : duplicateWarning ? t('places.addAnyway') : t('common.add')}
           </button>
         </div>
       }
@@ -384,7 +541,7 @@ export default function PlaceFormModal({
         {/* Place Search */}
         <div className="bg-slate-50 rounded-xl p-3 border border-slate-200">
           {!hasMapsKey && (
-            <p className="mb-2 text-xs" style={{ color: 'var(--text-faint)' }}>
+            <p className="mb-2 text-xs text-content-faint">
               {t('places.osmActive')}
             </p>
           )}
@@ -546,12 +703,15 @@ export default function PlaceFormModal({
             <div className="flex gap-2">
               <CustomSelect
                 value={form.category_id}
-                onChange={value => handleChange('category_id', value)}
+                onChange={value => handleChange('category_id', String(value))}
                 placeholder={t('places.noCategory')}
                 options={[
                   { value: '', label: t('places.noCategory') },
                   ...(categories || []).map(c => ({
-                    value: c.id,
+                    // form.category_id is a string; CustomSelect matches options by
+                    // strict equality, so the option value must be a string too —
+                    // otherwise the chosen category never renders in the trigger.
+                    value: String(c.id),
                     label: c.name,
                   })),
                 ]}
@@ -578,8 +738,11 @@ export default function PlaceFormModal({
           )}
         </div>
 
-        {/* Time — only shown when editing, not when creating */}
-        {place && (
+        {/* Time is per day-assignment: only shown when a single assignment is in
+            context (itinerary edit, or a single-assignment pool edit). Hidden when
+            creating, and for unassigned / multi-day pool edits where a single time
+            is ambiguous and wouldn't persist. */}
+        {place && assignmentId && (
           <TimeSection
             form={form}
             handleChange={handleChange}
@@ -639,7 +802,7 @@ export default function PlaceFormModal({
 
 interface TimeSectionProps {
   form: PlaceFormData
-  handleChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => void
+  handleChange: (field: string, value: string) => void
   assignmentId: number | null
   dayAssignments: Assignment[]
   hasTimeError: boolean

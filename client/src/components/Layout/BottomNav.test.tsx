@@ -1,4 +1,4 @@
-// FE-COMP-BOTTOMNAV-001 to FE-COMP-BOTTOMNAV-009
+// FE-COMP-BOTTOMNAV-001 to FE-COMP-BOTTOMNAV-006
 
 vi.mock('../../api/websocket', () => ({
   connect: vi.fn(),
@@ -16,11 +16,13 @@ vi.mock('react-router-dom', async () => {
   return { ...actual, useNavigate: () => mockNavigate };
 });
 
-import { render, screen, fireEvent } from '../../../tests/helpers/render';
+import { render, screen } from '../../../tests/helpers/render';
 import userEvent from '@testing-library/user-event';
 import { useAuthStore } from '../../store/authStore';
+import { useSettingsStore } from '../../store/settingsStore';
+import { useAddonStore } from '../../store/addonStore';
 import { resetAllStores, seedStore } from '../../../tests/helpers/store';
-import { buildUser } from '../../../tests/helpers/factories';
+import { buildUser, buildSettings } from '../../../tests/helpers/factories';
 import BottomNav from './BottomNav';
 
 const currentUser = buildUser({ id: 1, username: 'testuser', email: 'test@example.com' });
@@ -37,66 +39,44 @@ describe('BottomNav', () => {
     expect(document.body).toBeInTheDocument();
   });
 
-  it('FE-COMP-BOTTOMNAV-002: shows Trips nav link', () => {
+  it('FE-COMP-BOTTOMNAV-002: shows the dashboard nav item', () => {
     render(<BottomNav />);
-    expect(screen.getByText('Trips')).toBeInTheDocument();
+    expect(screen.getByText('My Trips')).toBeInTheDocument();
   });
 
-  it('FE-COMP-BOTTOMNAV-003: shows Profile button', () => {
-    render(<BottomNav />);
-    expect(screen.getByText('Profile')).toBeInTheDocument();
-  });
-
-  it('FE-COMP-BOTTOMNAV-004: profile sheet opens on click', async () => {
+  it('FE-COMP-BOTTOMNAV-003: centre create button creates a new trip by default', async () => {
     const user = userEvent.setup();
     render(<BottomNav />);
-    await user.click(screen.getByText('Profile'));
-    // Profile sheet shows username
-    expect(screen.getByText('testuser')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'New Trip' }));
+    expect(mockNavigate).toHaveBeenCalledWith('/dashboard?create=1');
   });
 
-  it('FE-COMP-BOTTOMNAV-005: profile sheet shows username', async () => {
-    const user = userEvent.setup();
+  it('FE-COMP-BOTTOMNAV-004: dashboard label translates when language is fr', async () => {
+    seedStore(useSettingsStore, { settings: buildSettings({ language: 'fr' }) });
     render(<BottomNav />);
-    await user.click(screen.getByText('Profile'));
-    expect(screen.getByText('testuser')).toBeInTheDocument();
-    expect(screen.getByText('test@example.com')).toBeInTheDocument();
+    expect(await screen.findByText('Mes voyages')).toBeInTheDocument();
   });
 
-  it('FE-COMP-BOTTOMNAV-006: profile sheet shows Settings link', async () => {
-    const user = userEvent.setup();
+  it('FE-COMP-BOTTOMNAV-005: addon labels translate when language is fr', async () => {
+    seedStore(useSettingsStore, { settings: buildSettings({ language: 'fr' }) });
+    seedStore(useAddonStore, {
+      addons: [
+        { id: 'vacay', name: 'Vacay', type: 'global', icon: 'calendar', enabled: true },
+        { id: 'atlas', name: 'Atlas', type: 'global', icon: 'globe', enabled: true },
+        { id: 'journey', name: 'Journey', type: 'global', icon: 'compass', enabled: true },
+      ],
+    });
     render(<BottomNav />);
-    await user.click(screen.getByText('Profile'));
-    expect(screen.getByText('Settings')).toBeInTheDocument();
+    expect(await screen.findByText('Vacances')).toBeInTheDocument();
+    expect(await screen.findByText('Atlas')).toBeInTheDocument();
+    expect(await screen.findByText('Journal de voyage')).toBeInTheDocument();
   });
 
-  it('FE-COMP-BOTTOMNAV-007: profile sheet shows Logout button', async () => {
-    const user = userEvent.setup();
+  it('FE-COMP-BOTTOMNAV-006: unknown addon id is not rendered', () => {
+    seedStore(useAddonStore, {
+      addons: [{ id: 'foo', name: 'Foo Addon', type: 'global', icon: 'star', enabled: true }],
+    });
     render(<BottomNav />);
-    await user.click(screen.getByText('Profile'));
-    expect(screen.getByText('Logout')).toBeInTheDocument();
-  });
-
-  it('FE-COMP-BOTTOMNAV-008: admin badge shown for admin users', async () => {
-    const adminUser = buildUser({ id: 2, username: 'adminuser', role: 'admin' });
-    seedStore(useAuthStore, { user: adminUser, isAuthenticated: true });
-    const user = userEvent.setup();
-    render(<BottomNav />);
-    await user.click(screen.getByText('Profile'));
-    expect(screen.getByText('Admin')).toBeInTheDocument();
-  });
-
-  it('FE-COMP-BOTTOMNAV-009: backdrop click closes profile sheet', async () => {
-    const user = userEvent.setup();
-    render(<BottomNav />);
-    await user.click(screen.getByText('Profile'));
-    // Sheet is open — username visible
-    expect(screen.getByText('testuser')).toBeInTheDocument();
-    // The outermost fixed div is the backdrop wrapper, clicking it triggers onClose
-    const backdrop = document.querySelector('.fixed.inset-0') as HTMLElement;
-    expect(backdrop).toBeTruthy();
-    fireEvent.click(backdrop);
-    // Sheet should be closed — username no longer visible (only the nav Profile text remains)
-    expect(screen.queryByText('testuser')).not.toBeInTheDocument();
+    expect(screen.queryByText('Foo Addon')).not.toBeInTheDocument();
   });
 });

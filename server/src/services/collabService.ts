@@ -1,8 +1,9 @@
 import path from 'path';
 import fs from 'fs';
-import { db, canAccessTrip } from '../db/database';
+import { db } from '../db/database';
 import { CollabNote, CollabPoll, CollabMessage, TripFile } from '../types';
 import { checkSsrf, createPinnedDispatcher } from '../utils/ssrfGuard';
+import { avatarUrl } from './avatarUrl';
 
 /* ------------------------------------------------------------------ */
 /*  Internal row types                                                 */
@@ -48,13 +49,8 @@ export interface LinkPreviewResult {
 /*  Helpers                                                            */
 /* ------------------------------------------------------------------ */
 
-export function avatarUrl(user: { avatar?: string | null }): string | null {
-  return user.avatar ? `/uploads/avatars/${user.avatar}` : null;
-}
-
-export function verifyTripAccess(tripId: string | number, userId: number) {
-  return canAccessTrip(tripId, userId);
-}
+export { avatarUrl };
+export { verifyTripAccess } from './tripAccess';
 
 /* ------------------------------------------------------------------ */
 /*  Reactions                                                          */
@@ -233,12 +229,17 @@ export function getPollWithVotes(pollId: number | bigint | string) {
     WHERE v.poll_id = ?
   `).all(pollId) as PollVoteRow[];
 
-  const formattedOptions = options.map((label: string | { label: string }, idx: number) => ({
-    label: typeof label === 'string' ? label : label.label || label,
-    voters: votes
-      .filter(v => v.option_index === idx)
-      .map(v => ({ id: v.user_id, user_id: v.user_id, username: v.username, avatar: v.avatar, avatar_url: avatarUrl(v) })),
-  }));
+  const formattedOptions = options.map((label: string | { label: string }, idx: number) => {
+    const text = typeof label === 'string' ? label : label.label || label;
+    return {
+      // The client renders `opt.text`; keep `label` too for any other consumer.
+      text,
+      label: text,
+      voters: votes
+        .filter(v => v.option_index === idx)
+        .map(v => ({ id: v.user_id, user_id: v.user_id, username: v.username, avatar: v.avatar, avatar_url: avatarUrl(v) })),
+    };
+  });
 
   return {
     ...poll,
