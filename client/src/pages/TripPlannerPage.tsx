@@ -627,7 +627,12 @@ export default function TripPlannerPage(): React.ReactElement | null {
             trip={trip}
             days={days}
             assignments={assignments}
+            reservations={reservations}
+            accommodations={tripAccommodations}
             onPlaceClick={handlePlaceClick}
+            onEditPlace={(place, assignmentId) => { setEditingPlace(place); setEditingAssignmentId(assignmentId || null); setShowPlaceForm(true) }}
+            onRemoveAssignment={handleRemoveAssignment}
+            onEditTransport={can('day_edit', trip) ? (reservation) => { setEditingTransport(reservation); setTransportModalDayId(reservation.day_id ?? null); setShowTransportModal(true) } : undefined}
           />
         )}
 

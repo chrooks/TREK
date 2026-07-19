@@ -31,5 +31,8 @@ const trip: TranslationStrings = {
   'timeline.empty': 'No days yet — set trip dates to see your timeline',
   'timeline.noUnscheduled': 'All placed',
   'timeline.day': 'Day {number}',
+  'timeline.menu.details': 'Details',
+  'timeline.menu.removeTime': 'Remove time',
+  'timeline.menu.removeFromDay': 'Remove from day',
 };
 export default trip;

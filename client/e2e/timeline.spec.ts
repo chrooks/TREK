@@ -26,8 +26,9 @@ test('timeline tab schedules a place by drag', async ({ page }) => {
   await expect(page).toHaveURL(/\/trips\/\d+/)
   const tripId = Number(page.url().match(/\/trips\/(\d+)/)?.[1])
 
-  // Seed one place + one untimed assignment through the API with the browser's
-  // own session cookies — faster and more reliable than driving the map UI.
+  // Seed one place + one untimed assignment + one timed flight through the API
+  // with the browser's own session cookies — faster and more reliable than
+  // driving the map UI.
   const seeded = await page.evaluate(async id => {
     const daysRes = await fetch(`/api/trips/${id}/days`, { credentials: 'include' })
     const days = await daysRes.json()
@@ -45,6 +46,15 @@ test('timeline tab schedules a place by drag', async ({ page }) => {
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ place_id: placeId }),
+    })
+    await fetch(`/api/trips/${id}/reservations`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: 'LA Trip Flight', type: 'flight', status: 'confirmed',
+        day_id: dayId, reservation_time: '07:00', reservation_end_time: '09:37',
+      }),
     })
     return { dayId, placeId }
   }, tripId)
@@ -75,6 +85,32 @@ test('timeline tab schedules a place by drag', async ({ page }) => {
   await page.reload()
   await page.getByRole('button', { name: 'Timeline' }).click()
   await expect(page.locator('[id^="timeline-block-"]')).toBeVisible({ timeout: 20_000 })
+  await expect(page.locator('[id^="timeline-unscheduled-"]')).toHaveCount(0)
+
+  // The seeded flight renders as a read-only transport block at its times.
+  const transport = page.locator('[id^="timeline-transport-"]')
+  await expect(transport).toBeVisible()
+  await expect(transport).toContainText('LA Trip Flight')
+
+  // Right-click the block → context menu → Remove time puts it back in the strip.
+  await page.locator('[id^="timeline-block-"]').click({ button: 'right' })
+  await page.getByText('Remove time').click()
+  await expect(page.locator('[id^="timeline-unscheduled-"]')).toHaveCount(1)
+  await expect(page.locator('[id^="timeline-block-"]')).toHaveCount(0)
+
+  // Drag the chip back into the grid, then drag the block onto the strip — the
+  // drag-out affordance also unschedules.
+  const chip2 = page.locator('[id^="timeline-unscheduled-"]')
+  await chip2.dragTo(page.locator(`#timeline-day-${seeded.dayId}`), { targetPosition: { x: 100, y: 240 } })
+  const block2 = page.locator('[id^="timeline-block-"]')
+  await expect(block2).toBeVisible()
+  await block2.dragTo(page.locator(`#timeline-strip-${seeded.dayId}`))
+  await expect(page.locator('[id^="timeline-unscheduled-"]')).toHaveCount(1)
+  await expect(page.locator('[id^="timeline-block-"]')).toHaveCount(0)
+
+  // Right-click chip → Remove from day deletes the assignment entirely.
+  await page.locator('[id^="timeline-unscheduled-"]').click({ button: 'right' })
+  await page.getByText('Remove from day').click()
   await expect(page.locator('[id^="timeline-unscheduled-"]')).toHaveCount(0)
 
   // Visual artifacts for design review (test-results/ is ephemeral output).
