@@ -1,5 +1,5 @@
 import React, { useMemo, useRef, useState } from 'react'
-import { CalendarClock, Clock, Minus } from 'lucide-react'
+import { CalendarClock, Clock, Minus, Ticket } from 'lucide-react'
 import { assignmentsApi } from '../../api/client'
 import { useTripStore } from '../../store/tripStore'
 import { useCanDo } from '../../store/permissionsStore'
@@ -30,6 +30,8 @@ interface AssignmentSpan extends TimeSpan {
   kind: 'place'
   assignment: Assignment
   dayId: number
+  /** Set when the time came from a linked booking rather than the assignment. */
+  bookedVia?: Reservation
 }
 
 interface TransportSpan extends TimeSpan {
@@ -101,28 +103,42 @@ export default function TripTimeline({
     [accommodations]
   )
 
+  // A booking linked to an assignment carries the decided time — an untimed
+  // place with a timed booking is scheduled, not "unplaced".
+  const reservationByAssignmentId = useMemo(() => {
+    const map = new Map<number, Reservation>()
+    for (const r of reservations) {
+      if (r.assignment_id != null && r.reservation_time) map.set(r.assignment_id, r)
+    }
+    return map
+  }, [reservations])
+
   const { scheduled, unscheduled } = useMemo(() => {
     const scheduled: AssignmentSpan[] = []
     const unscheduled: Array<{ assignment: Assignment; dayId: number }> = []
     for (const day of days) {
       for (const a of assignments[String(day.id)] || []) {
         if (accommodationPlaceIds.has(a.place_id)) continue
-        const start = parseTimeToMinutes(a.place?.place_time)
+        const linked = reservationByAssignmentId.get(a.id)
+        const ownStart = parseTimeToMinutes(a.place?.place_time)
+        const start = ownStart ?? parseTimeToMinutes(linked?.reservation_time)
         if (start == null) {
           unscheduled.push({ assignment: a, dayId: day.id })
         } else {
+          const ownEnd = ownStart != null ? parseTimeToMinutes(a.place?.end_time) : parseTimeToMinutes(linked?.reservation_end_time)
           scheduled.push({
             kind: 'place',
             assignment: a,
             dayId: day.id,
             startMinutes: start,
-            endMinutes: resolveEndMinutes(start, parseTimeToMinutes(a.place?.end_time)),
+            endMinutes: resolveEndMinutes(start, ownEnd),
+            bookedVia: ownStart == null ? linked : reservationByAssignmentId.get(a.id),
           })
         }
       }
     }
     return { scheduled, unscheduled }
-  }, [days, assignments, accommodationPlaceIds])
+  }, [days, assignments, accommodationPlaceIds, reservationByAssignmentId])
 
   // Transports and timed bookings, positioned at their local wall-clock times.
   const transportSpansByDay = useMemo(() => {
@@ -525,8 +541,9 @@ export default function TripTimeline({
                         transition: 'box-shadow 180ms cubic-bezier(0.23,1,0.32,1)',
                       }}
                     >
-                      <div className="text-content" style={{ fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        {span.assignment.place?.name}
+                      <div className="text-content" style={{ fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {span.bookedVia && <Ticket size={11} style={{ flexShrink: 0 }} aria-label={t('timeline.booked')} />}
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{span.assignment.place?.name}</span>
                       </div>
                       <div className="text-content-muted" style={{ fontSize: 10, fontVariantNumeric: 'tabular-nums' }}>
                         {formatTime(minutesToTimeString(span.startMinutes), locale, timeFormat)}
