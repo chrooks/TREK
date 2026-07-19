@@ -2,6 +2,7 @@ import type { TranslationStrings } from '../types';
 
 const trip: TranslationStrings = {
   'trip.tabs.plan': 'Plan',
+  'trip.tabs.timeline': 'Timeline',
   'trip.tabs.transports': 'Transports',
   'trip.tabs.reservations': 'Bookings',
   'trip.tabs.reservationsShort': 'Book',
@@ -27,5 +28,8 @@ const trip: TranslationStrings = {
   'trip.confirm.deletePlace': 'Are you sure you want to delete this place?',
   'trip.confirm.deletePlaces': 'Delete {count} places?',
   'trip.toast.placesDeleted': '{count} places deleted',
+  'timeline.empty': 'No days yet — set trip dates to see your timeline',
+  'timeline.noUnscheduled': 'All placed',
+  'timeline.day': 'Day {number}',
 };
 export default trip;

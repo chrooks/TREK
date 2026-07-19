@@ -18,6 +18,7 @@ import TripMembersModal from '../components/Trips/TripMembersModal'
 import { ReservationModal } from '../components/Planner/ReservationModal'
 import { TransportModal } from '../components/Planner/TransportModal'
 import BookingImportModal from '../components/Planner/BookingImportModal'
+import TripTimeline from '../components/Planner/TripTimeline'
 import AirTrailImportModal from '../components/Planner/AirTrailImportModal'
 // MemoriesPanel moved to Journey addon
 import ReservationsPanel from '../components/Planner/ReservationsPanel'
@@ -618,6 +619,16 @@ export default function TripPlannerPage(): React.ReactElement | null {
               document.body
             )}
           </div>
+        )}
+
+        {activeTab === 'timeline' && (
+          <TripTimeline
+            tripId={tripId}
+            trip={trip}
+            days={days}
+            assignments={assignments}
+            onPlaceClick={handlePlaceClick}
+          />
         )}
 
         {activeTab === 'transports' && (
