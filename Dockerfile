@@ -55,8 +55,8 @@ RUN apt-get update && \
     npm ci --workspace=server --omit=dev && \
     ARCH=$(dpkg --print-architecture) && \
     if [ "$ARCH" = "amd64" ]; then \
-        wget -qO /tmp/ki.tgz https://cdn.kde.org/ci-builds/pim/kitinerary/release-26.04/linux/kitinerary-extractor-x86_64-26.04.2.tgz && \
-        echo "ba5cfb4a2353157c8f54cbeaea0097c5bf2c3a810e0342f63d6e524826176628 /tmp/ki.tgz" | sha256sum -c && \
+        wget -qO /tmp/ki.tgz https://cdn.kde.org/ci-builds/pim/kitinerary/release-26.04/linux/kitinerary-extractor-x86_64-26.04.3.tgz && \
+        echo "ed2d1da43e2299a944f25b1521cb40183bbf9bc7691fa0f3d53a69c118dff778 /tmp/ki.tgz" | sha256sum -c && \
         tar -xz -C /usr/local -f /tmp/ki.tgz bin/kitinerary-extractor share/locale && \
         rm /tmp/ki.tgz; \
     else \
