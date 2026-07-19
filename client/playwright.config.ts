@@ -1,5 +1,11 @@
 import { defineConfig, devices } from '@playwright/test'
 
+// Ports are overridable so the run can dodge services already on the host
+// (TREK_API_PORT / TREK_DEV_PORT flow through to vite.config.js and
+// server-launch.mjs).
+const API_PORT = Number(process.env.TREK_API_PORT) || 3001
+const DEV_PORT = Number(process.env.TREK_DEV_PORT) || 5173
+
 /**
  * E2E harness for TREK's critical user flows (FE7).
  *
@@ -19,7 +25,7 @@ export default defineConfig({
   expect: { timeout: 15_000 },
   reporter: [['list']],
   use: {
-    baseURL: 'http://localhost:5173',
+    baseURL: `http://localhost:${DEV_PORT}`,
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
   },
@@ -41,7 +47,7 @@ export default defineConfig({
       // Always start our own backend (never reuse) so the isolated test DB is
       // reset + reseeded on every run, regardless of any stray dev server.
       command: 'node e2e/server-launch.mjs',
-      port: 3001,
+      port: API_PORT,
       reuseExistingServer: false,
       timeout: 180_000,
       stdout: 'pipe',
@@ -49,7 +55,7 @@ export default defineConfig({
     },
     {
       command: 'npm run dev',
-      port: 5173,
+      port: DEV_PORT,
       reuseExistingServer: !process.env.CI,
       timeout: 120_000,
     },

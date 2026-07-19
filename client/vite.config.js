@@ -2,6 +2,9 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 
+// E2E runs override these when the default ports are taken on the host.
+const API_TARGET = `http://localhost:${process.env.TREK_API_PORT || 3001}`
+
 export default defineConfig({
   plugins: [
     react(),
@@ -123,45 +126,45 @@ export default defineConfig({
     modulePreload: { polyfill: true },
   },
   server: {
-    port: 5173,
+    port: Number(process.env.TREK_DEV_PORT) || 5173,
     proxy: {
       '/api': {
-        target: 'http://localhost:3001',
+        target: API_TARGET,
         changeOrigin: true,
       },
       '/uploads': {
-        target: 'http://localhost:3001',
+        target: API_TARGET,
         changeOrigin: true,
       },
       '/ws': {
-        target: 'http://localhost:3001',
+        target: API_TARGET,
         ws: true,
       },
       '/mcp': {
-        target: 'http://localhost:3001',
+        target: API_TARGET,
         changeOrigin: true,
       },
       // OAuth 2.1 endpoints handled by backend (SDK authorize handler + token/revoke)
       // /oauth/authorize goes to backend so the SDK can redirect to /oauth/consent
       // /oauth/consent is served by Vite as a SPA route (no proxy entry needed)
       '/oauth/authorize': {
-        target: 'http://localhost:3001',
+        target: API_TARGET,
         changeOrigin: true,
       },
       '/oauth/token': {
-        target: 'http://localhost:3001',
+        target: API_TARGET,
         changeOrigin: true,
       },
       '/oauth/register': {
-        target: 'http://localhost:3001',
+        target: API_TARGET,
         changeOrigin: true,
       },
       '/oauth/revoke': {
-        target: 'http://localhost:3001',
+        target: API_TARGET,
         changeOrigin: true,
       },
       '/.well-known': {
-        target: 'http://localhost:3001',
+        target: API_TARGET,
         changeOrigin: true,
       },
     }
