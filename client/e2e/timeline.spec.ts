@@ -92,6 +92,12 @@ test('timeline tab schedules a place by drag', async ({ page }) => {
   await expect(transport).toBeVisible()
   await expect(transport).toContainText('LA Trip Flight')
 
+  // Double-click the block → the place details modal opens.
+  await page.locator('[id^="timeline-block-"]').dblclick()
+  await expect(page.getByText('Edit Place')).toBeVisible()
+  await expect(page.getByPlaceholder('e.g. Eiffel Tower')).toHaveValue('Universal Studios')
+  await page.keyboard.press('Escape')
+
   // Right-click the block → context menu → Remove time puts it back in the strip.
   await page.locator('[id^="timeline-block-"]').click({ button: 'right' })
   await page.getByText('Remove time').click()

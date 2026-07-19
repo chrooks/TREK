@@ -1,5 +1,5 @@
 import React, { useMemo, useRef, useState } from 'react'
-import { CalendarClock, Pencil, Clock, Minus } from 'lucide-react'
+import { CalendarClock, Clock, Minus } from 'lucide-react'
 import { assignmentsApi } from '../../api/client'
 import { useTripStore } from '../../store/tripStore'
 import { useCanDo } from '../../store/permissionsStore'
@@ -317,14 +317,17 @@ export default function TripTimeline({
 
   const openAssignmentMenu = (e: React.MouseEvent, dayId: number, assignment: Assignment, hasTime: boolean): void => {
     ctxMenu.open(e, [
-      { label: t('timeline.menu.details'), icon: Pencil, onClick: () => onEditPlace(assignment.place as unknown as Place, assignment.id) },
       ...(canEdit && hasTime
         ? [{ label: t('timeline.menu.removeTime'), icon: Clock, onClick: () => void persistTime(dayId, assignment, null, null) }]
         : []),
       ...(canEdit
-        ? [{ divider: true }, { label: t('timeline.menu.removeFromDay'), icon: Minus, danger: true, onClick: () => onRemoveAssignment(dayId, assignment.id) }]
+        ? [{ label: t('timeline.menu.removeFromDay'), icon: Minus, danger: true, onClick: () => onRemoveAssignment(dayId, assignment.id) }]
         : []),
     ])
+  }
+
+  const openDetails = (assignment: Assignment): void => {
+    onEditPlace(assignment.place as unknown as Place, assignment.id)
   }
 
   const dayLabel = (day: Day, index: number): string => {
@@ -410,6 +413,7 @@ export default function TripTimeline({
                     }}
                     onDragEnd={() => { setDraggingId(null); setDropPreview(null); setStripPreviewDayId(null); window.__dragData = null }}
                     onClick={() => onPlaceClick(assignment.place_id, assignment.id)}
+                    onDoubleClick={() => openDetails(assignment)}
                     onContextMenu={e => openAssignmentMenu(e, day.id, assignment, false)}
                     className="bg-surface-card text-content hover:shadow-md"
                     style={{
@@ -507,6 +511,7 @@ export default function TripTimeline({
                       }}
                       onDragEnd={() => { setDraggingId(null); setDropPreview(null); setStripPreviewDayId(null); window.__dragData = null }}
                       onClick={() => onPlaceClick(span.assignment.place_id, span.assignment.id)}
+                      onDoubleClick={() => openDetails(span.assignment)}
                       onContextMenu={e => openAssignmentMenu(e, day.id, span.assignment, true)}
                       className="border border-edge-faint hover:shadow-md"
                       style={{
