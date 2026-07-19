@@ -32,6 +32,10 @@ const trip: TranslationStrings = {
   'timeline.noUnscheduled': 'All placed',
   'timeline.day': 'Day {number}',
   'timeline.booked': 'Booked',
+  'timeline.candidates.grouped': 'Grouped as candidates',
+  'timeline.candidates.ungroup': 'Ungroup candidates',
+  'timeline.candidates.open': '{count} options — click to choose',
+  'timeline.candidates.decided': 'Chosen — {count} alternate(s) collapsed',
   'timeline.menu.removeTime': 'Remove time',
   'timeline.menu.removeFromDay': 'Remove from day',
 };

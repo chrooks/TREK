@@ -3071,6 +3071,19 @@ function runMigrations(db: Database.Database): void {
         if (!err.message?.includes('duplicate column name')) throw err;
       }
     },
+    // Candidate places (#2): several assignments can share a timeslot as
+    // alternatives. candidate_group links them (the group id is the lowest
+    // member assignment id); is_chosen marks the picked one, the rest collapse
+    // behind it in the UI.
+    () => {
+      for (const col of ['candidate_group INTEGER', 'is_chosen INTEGER DEFAULT 0']) {
+        try {
+          db.exec(`ALTER TABLE day_assignments ADD COLUMN ${col}`);
+        } catch (err: any) {
+          if (!err.message?.includes('duplicate column name')) throw err;
+        }
+      }
+    },
   ];
 
   if (currentVersion < migrations.length) {

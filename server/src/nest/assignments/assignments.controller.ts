@@ -169,6 +169,66 @@ export class AssignmentOpsController {
     return { assignment };
   }
 
+  // Candidate places (#2): group alternatives for one timeslot, choose the
+  // winner (the rest collapse), or dissolve the group.
+  @Post('candidate-groups')
+  createCandidateGroup(
+    @CurrentUser() user: User,
+    @Param('tripId') tripId: string,
+    @Body('assignment_ids') assignmentIds: unknown,
+    @Headers('x-socket-id') socketId?: string,
+  ) {
+    const trip = requireTrip(this.assignments, tripId, user);
+    requireEdit(this.assignments, trip, user);
+    if (!Array.isArray(assignmentIds) || assignmentIds.length < 2 || !assignmentIds.every(n => typeof n === 'number')) {
+      throw new HttpException({ error: 'assignment_ids must be an array of at least 2 ids' }, 400);
+    }
+    try {
+      const assignments = this.assignments.createCandidateGroup(tripId, assignmentIds);
+      this.assignments.broadcast(tripId, 'assignments:candidates', { assignments }, socketId);
+      return { assignments };
+    } catch (err) {
+      throw new HttpException({ error: err instanceof Error ? err.message : 'Invalid candidate group' }, 400);
+    }
+  }
+
+  @Put(':id/choose')
+  chooseCandidate(
+    @CurrentUser() user: User,
+    @Param('tripId') tripId: string,
+    @Param('id') id: string,
+    @Headers('x-socket-id') socketId?: string,
+  ) {
+    const trip = requireTrip(this.assignments, tripId, user);
+    requireEdit(this.assignments, trip, user);
+    try {
+      const assignments = this.assignments.chooseCandidate(tripId, id);
+      this.assignments.broadcast(tripId, 'assignments:candidates', { assignments }, socketId);
+      return { assignments };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Choose failed';
+      throw new HttpException({ error: message }, message.includes('not found') ? 404 : 400);
+    }
+  }
+
+  @Delete('candidate-groups/:groupId')
+  dissolveCandidateGroup(
+    @CurrentUser() user: User,
+    @Param('tripId') tripId: string,
+    @Param('groupId') groupId: string,
+    @Headers('x-socket-id') socketId?: string,
+  ) {
+    const trip = requireTrip(this.assignments, tripId, user);
+    requireEdit(this.assignments, trip, user);
+    try {
+      const assignments = this.assignments.dissolveCandidateGroup(tripId, groupId);
+      this.assignments.broadcast(tripId, 'assignments:candidates', { assignments }, socketId);
+      return { assignments };
+    } catch (err) {
+      throw new HttpException({ error: err instanceof Error ? err.message : 'Dissolve failed' }, 404);
+    }
+  }
+
   @Put(':id/participants')
   setParticipants(
     @CurrentUser() user: User,

@@ -143,10 +143,37 @@ test('timeline tab schedules a place by drag', async ({ page }) => {
   await expect(page.locator('[id^="timeline-unscheduled-"]')).toHaveCount(1)
   await expect(page.locator('[id^="timeline-block-"]', { hasText: 'Universal Studios' })).toHaveCount(0)
 
-  // Right-click chip → Remove from day deletes the assignment entirely.
-  await page.locator('[id^="timeline-unscheduled-"]').click({ button: 'right' })
-  await page.getByText('Remove from day').click()
+  // Candidate groups (#2): drag the Universal chip onto the booked SoFi block —
+  // they become alternatives for one slot; the chip collapses behind the block.
+  const chip3 = page.locator('[id^="timeline-unscheduled-"]')
+  const sofiBlock = page.locator('[id^="timeline-block-"]', { hasText: 'SoFi Stadium Tour' })
+  // dragTo drops on the column behind the block; dispatch the HTML5 sequence
+  // at the block directly so the drop-onto-block path is what's exercised.
+  const dt = await page.evaluateHandle(() => new DataTransfer())
+  await chip3.dispatchEvent('dragstart', { dataTransfer: dt })
+  await sofiBlock.dispatchEvent('dragover', { dataTransfer: dt })
+  await sofiBlock.dispatchEvent('drop', { dataTransfer: dt })
+  await chip3.dispatchEvent('dragend', { dataTransfer: dt }).catch(() => {})
+  await expect(page.getByText('Grouped as candidates')).toBeVisible()
   await expect(page.locator('[id^="timeline-unscheduled-"]')).toHaveCount(0)
+  const groupBadge = page.locator('[id^="timeline-candidates-"]')
+  await expect(groupBadge).toContainText('2?')
+
+  // Open the chooser and pick Universal — it becomes the visible winner with a
+  // +1 collapsed-alternate badge.
+  await groupBadge.click()
+  await page.getByText('Universal Studios', { exact: false }).last().click()
+  await expect(page.locator('[id^="timeline-block-"]', { hasText: 'Universal Studios' })).toBeVisible()
+  await expect(page.locator('[id^="timeline-candidates-"]')).toContainText('+1')
+
+  // Ungroup dissolves the alternatives back to normal items.
+  await page.locator('[id^="timeline-candidates-"]').click()
+  await page.getByText('Ungroup candidates').click()
+  await expect(page.locator('[id^="timeline-candidates-"]')).toHaveCount(0)
+
+  // Right-click chip → Remove from day deletes the assignment entirely.
+  await page.locator('[id^="timeline-unscheduled-"]').first().click({ button: 'right' })
+  await page.getByText('Remove from day').click()
 
   // Visual artifacts for design review (test-results/ is ephemeral output).
   await page.screenshot({ path: 'test-results/timeline-light.png', fullPage: false })

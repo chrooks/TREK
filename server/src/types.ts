@@ -104,6 +104,8 @@ export interface DayAssignment {
   reservation_datetime?: string | null;
   assignment_time?: string | null;
   assignment_end_time?: string | null;
+  candidate_group?: number | null;
+  is_chosen?: number | null;
   created_at?: string;
 }
 

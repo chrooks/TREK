@@ -385,6 +385,9 @@ export const assignmentsApi = {
   getParticipants: (tripId: number | string, id: number) => apiClient.get(`/trips/${tripId}/assignments/${id}/participants`).then(r => r.data),
   setParticipants: (tripId: number | string, id: number, userIds: number[]) => apiClient.put(`/trips/${tripId}/assignments/${id}/participants`, { user_ids: userIds } satisfies AssignmentParticipantsRequest).then(r => r.data),
   updateTime: (tripId: number | string, id: number, times: AssignmentTimeRequest) => apiClient.put(`/trips/${tripId}/assignments/${id}/time`, times).then(r => r.data),
+  createCandidateGroup: (tripId: number | string, assignmentIds: number[]) => apiClient.post(`/trips/${tripId}/assignments/candidate-groups`, { assignment_ids: assignmentIds }).then(r => r.data),
+  chooseCandidate: (tripId: number | string, id: number) => apiClient.put(`/trips/${tripId}/assignments/${id}/choose`, {}).then(r => r.data),
+  dissolveCandidateGroup: (tripId: number | string, groupId: number) => apiClient.delete(`/trips/${tripId}/assignments/candidate-groups/${groupId}`).then(r => r.data),
 }
 
 export const packingApi = {

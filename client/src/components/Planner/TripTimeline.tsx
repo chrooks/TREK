@@ -1,5 +1,5 @@
 import React, { useMemo, useRef, useState } from 'react'
-import { CalendarClock, Clock, Minus, Ticket } from 'lucide-react'
+import { CalendarClock, Check, Clock, Layers, Minus, Ticket, X } from 'lucide-react'
 import { assignmentsApi } from '../../api/client'
 import { useTripStore } from '../../store/tripStore'
 import { useCanDo } from '../../store/permissionsStore'
@@ -113,19 +113,133 @@ export default function TripTimeline({
     return map
   }, [reservations])
 
+  // Candidate groups (#2): several assignments can stand as alternatives for
+  // one timeslot. Only the representative renders — the chosen member if one
+  // was picked, else the lowest id — the rest collapse behind it.
+  const candidateGroups = useMemo(() => {
+    const byGroup = new Map<number, Assignment[]>()
+    for (const day of days) {
+      for (const a of assignments[String(day.id)] || []) {
+        if (a.candidate_group != null) {
+          byGroup.set(a.candidate_group, [...(byGroup.get(a.candidate_group) || []), a])
+        }
+      }
+    }
+    return byGroup
+  }, [days, assignments])
+
+  const collapsedIds = useMemo(() => {
+    const hidden = new Set<number>()
+    const hasSlot = (m: Assignment): boolean =>
+      Boolean(m.place?.place_time || reservationByAssignmentId.get(m.id)?.reservation_time)
+    for (const members of candidateGroups.values()) {
+      // The representative anchors the slot: the chosen member wins, else the
+      // one that actually holds a time (own or booked), else the lowest id.
+      const representative =
+        members.find(m => m.is_chosen) ??
+        members.find(hasSlot) ??
+        members.reduce((a, b) => (a.id < b.id ? a : b))
+      for (const m of members) if (m.id !== representative.id) hidden.add(m.id)
+    }
+    return hidden
+  }, [candidateGroups, reservationByAssignmentId])
+
+  /** Merge candidate-endpoint responses back into the store's day lists. */
+  const applyCandidateResult = (updated: Assignment[]): void => {
+    if (updated.length === 0) return
+    const state = useTripStore.getState()
+    const byId = new Map(updated.map(a => [a.id, a]))
+    const next: AssignmentsMap = {}
+    for (const [key, list] of Object.entries(state.assignments)) {
+      next[key] = list.map(a => {
+        const u = byId.get(a.id)
+        return u ? { ...a, candidate_group: u.candidate_group ?? null, is_chosen: u.is_chosen ?? 0 } : a
+      })
+    }
+    tripActions.setAssignments(next)
+  }
+
+  const groupWith = async (targetAssignment: Assignment, draggedId: number, fromDayId: number, targetDayId: number): Promise<void> => {
+    if (draggedId === targetAssignment.id) return
+    if (fromDayId !== targetDayId) {
+      try {
+        await tripActions.moveAssignment(tripId, draggedId, fromDayId, targetDayId)
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : t('common.unknownError'))
+        return
+      }
+    }
+    try {
+      const data = await assignmentsApi.createCandidateGroup(tripId, [targetAssignment.id, draggedId])
+      applyCandidateResult(data.assignments || [])
+      toast.success(t('timeline.candidates.grouped'))
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t('common.unknownError'))
+    }
+  }
+
+  const openCandidateMenu = (e: React.MouseEvent, members: Assignment[], groupId: number): void => {
+    e.preventDefault()
+    e.stopPropagation()
+    ctxMenu.open(e, [
+      ...members.map(m => ({
+        label: m.place?.name || String(m.id),
+        icon: m.is_chosen ? Check : undefined,
+        onClick: () => {
+          void assignmentsApi.chooseCandidate(tripId, m.id)
+            .then(data => applyCandidateResult(data.assignments || []))
+            .catch(err => toast.error(err instanceof Error ? err.message : t('common.unknownError')))
+        },
+      })),
+      ...(canEdit
+        ? [
+            { divider: true },
+            {
+              label: t('timeline.candidates.ungroup'),
+              icon: X,
+              danger: true,
+              onClick: () => {
+                void assignmentsApi.dissolveCandidateGroup(tripId, groupId)
+                  .then(data => applyCandidateResult(data.assignments || []))
+                  .catch(err => toast.error(err instanceof Error ? err.message : t('common.unknownError')))
+              },
+            },
+          ]
+        : []),
+    ])
+  }
+
   const { scheduled, unscheduled } = useMemo(() => {
     const scheduled: AssignmentSpan[] = []
     const unscheduled: Array<{ assignment: Assignment; dayId: number }> = []
+    // The slot belongs to the GROUP: a representative without a time of its own
+    // (a just-chosen alternative) inherits the slot from whichever member holds
+    // one, so choosing never knocks the group off the grid.
+    const groupSlot = (a: Assignment): { start: number | null; end: number | null } => {
+      if (a.candidate_group == null) return { start: null, end: null }
+      for (const m of candidateGroups.get(a.candidate_group) || []) {
+        const own = parseTimeToMinutes(m.place?.place_time)
+        if (own != null) return { start: own, end: parseTimeToMinutes(m.place?.end_time) }
+        const linked = reservationByAssignmentId.get(m.id)
+        const booked = parseTimeToMinutes(linked?.reservation_time)
+        if (booked != null) return { start: booked, end: parseTimeToMinutes(linked?.reservation_end_time) }
+      }
+      return { start: null, end: null }
+    }
     for (const day of days) {
       for (const a of assignments[String(day.id)] || []) {
         if (accommodationPlaceIds.has(a.place_id)) continue
+        if (collapsedIds.has(a.id)) continue
         const linked = reservationByAssignmentId.get(a.id)
         const ownStart = parseTimeToMinutes(a.place?.place_time)
-        const start = ownStart ?? parseTimeToMinutes(linked?.reservation_time)
+        const slot = ownStart == null && parseTimeToMinutes(linked?.reservation_time) == null ? groupSlot(a) : null
+        const start = ownStart ?? parseTimeToMinutes(linked?.reservation_time) ?? slot?.start ?? null
         if (start == null) {
           unscheduled.push({ assignment: a, dayId: day.id })
         } else {
-          const ownEnd = ownStart != null ? parseTimeToMinutes(a.place?.end_time) : parseTimeToMinutes(linked?.reservation_end_time)
+          const ownEnd = ownStart != null
+            ? parseTimeToMinutes(a.place?.end_time)
+            : (parseTimeToMinutes(linked?.reservation_end_time) ?? slot?.end ?? null)
           scheduled.push({
             kind: 'place',
             assignment: a,
@@ -138,7 +252,7 @@ export default function TripTimeline({
       }
     }
     return { scheduled, unscheduled }
-  }, [days, assignments, accommodationPlaceIds, reservationByAssignmentId])
+  }, [days, assignments, accommodationPlaceIds, reservationByAssignmentId, collapsedIds, candidateGroups])
 
   // Transports and timed bookings, positioned at their local wall-clock times.
   const transportSpansByDay = useMemo(() => {
@@ -430,7 +544,20 @@ export default function TripTimeline({
                     onDragEnd={() => { setDraggingId(null); setDropPreview(null); setStripPreviewDayId(null); window.__dragData = null }}
                     onClick={() => onPlaceClick(assignment.place_id, assignment.id)}
                     onDoubleClick={() => openDetails(assignment)}
-                    onContextMenu={e => openAssignmentMenu(e, day.id, assignment, false)}
+                    onContextMenu={e => {
+                      const members = assignment.candidate_group != null ? candidateGroups.get(assignment.candidate_group) : null
+                      if (members && members.length > 1) openCandidateMenu(e, members, assignment.candidate_group!)
+                      else openAssignmentMenu(e, day.id, assignment, false)
+                    }}
+                    onDrop={e => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      setStripPreviewDayId(null)
+                      setDraggingId(null)
+                      const payload = readDragPayload(e)
+                      if (payload) void groupWith(assignment, payload.assignmentId, payload.fromDayId, day.id)
+                    }}
+                    onDragOver={e => { if (canEdit) { e.preventDefault(); e.stopPropagation() } }}
                     className="bg-surface-card text-content hover:shadow-md"
                     style={{
                       display: 'inline-flex', alignItems: 'center', gap: 5,
@@ -443,6 +570,20 @@ export default function TripTimeline({
                   >
                     <PlaceAvatar place={assignment.place} size={14} />
                     <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{assignment.place?.name}</span>
+                    {(() => {
+                      const members = assignment.candidate_group != null ? candidateGroups.get(assignment.candidate_group) : null
+                      if (!members || members.length < 2) return null
+                      const isDecided = members.some(m => m.is_chosen)
+                      return (
+                        <span className="bg-surface-tertiary text-content-muted" style={{
+                          display: 'inline-flex', alignItems: 'center', gap: 2, flexShrink: 0,
+                          padding: '0 5px', borderRadius: 99, fontSize: 9, fontWeight: 600,
+                        }}>
+                          <Layers size={8} />
+                          {isDecided ? `+${members.length - 1}` : `${members.length}?`}
+                        </span>
+                      )
+                    })()}
                   </div>
                 ))}
               </div>
@@ -528,7 +669,22 @@ export default function TripTimeline({
                       onDragEnd={() => { setDraggingId(null); setDropPreview(null); setStripPreviewDayId(null); window.__dragData = null }}
                       onClick={() => onPlaceClick(span.assignment.place_id, span.assignment.id)}
                       onDoubleClick={() => openDetails(span.assignment)}
-                      onContextMenu={e => openAssignmentMenu(e, day.id, span.assignment, true)}
+                      onContextMenu={e => {
+                        const members = span.assignment.candidate_group != null ? candidateGroups.get(span.assignment.candidate_group) : null
+                        if (members && members.length > 1) openCandidateMenu(e, members, span.assignment.candidate_group!)
+                        else openAssignmentMenu(e, day.id, span.assignment, true)
+                      }}
+                      onDrop={e => {
+                        // Dropping one item onto another makes them candidates
+                        // for the same slot rather than repositioning.
+                        e.preventDefault()
+                        e.stopPropagation()
+                        setDropPreview(null)
+                        setDraggingId(null)
+                        const payload = readDragPayload(e)
+                        if (payload) void groupWith(span.assignment, payload.assignmentId, payload.fromDayId, day.id)
+                      }}
+                      onDragOver={e => { if (canEdit) { e.preventDefault(); e.stopPropagation() } }}
                       className="border border-edge-faint hover:shadow-md"
                       style={{
                         position: 'absolute', top, height,
@@ -544,6 +700,28 @@ export default function TripTimeline({
                       <div className="text-content" style={{ fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                         {span.bookedVia && <Ticket size={11} style={{ flexShrink: 0 }} aria-label={t('timeline.booked')} />}
                         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{span.assignment.place?.name}</span>
+                        {(() => {
+                          const members = span.assignment.candidate_group != null ? candidateGroups.get(span.assignment.candidate_group) : null
+                          if (!members || members.length < 2) return null
+                          const isDecided = members.some(m => m.is_chosen)
+                          return (
+                            <button
+                              id={`timeline-candidates-${span.assignment.id}`}
+                              onClick={e => openCandidateMenu(e, members, span.assignment.candidate_group!)}
+                              onDoubleClick={e => e.stopPropagation()}
+                              className="bg-surface-tertiary text-content-muted hover:opacity-[0.85]"
+                              title={isDecided ? t('timeline.candidates.decided', { count: members.length - 1 }) : t('timeline.candidates.open', { count: members.length })}
+                              style={{
+                                appearance: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+                                display: 'inline-flex', alignItems: 'center', gap: 3, flexShrink: 0,
+                                padding: '1px 6px', borderRadius: 99, fontSize: 9, fontWeight: 600, marginLeft: 'auto',
+                              }}
+                            >
+                              <Layers size={9} />
+                              {isDecided ? `+${members.length - 1}` : `${members.length}?`}
+                            </button>
+                          )
+                        })()}
                       </div>
                       <div className="text-content-muted" style={{ fontSize: 10, fontVariantNumeric: 'tabular-nums' }}>
                         {formatTime(minutesToTimeString(span.startMinutes), locale, timeFormat)}

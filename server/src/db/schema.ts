@@ -161,7 +161,9 @@ function createTables(db: Database.Database): void {
       reservation_status TEXT DEFAULT 'none',
       reservation_notes TEXT,
       reservation_datetime TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      candidate_group INTEGER,
+      is_chosen INTEGER DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS packing_items (

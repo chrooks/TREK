@@ -39,6 +39,8 @@ export const assignmentSchema = z.object({
   notes: z.string().nullable().optional(),
   assignment_time: z.string().nullable().optional(),
   assignment_end_time: z.string().nullable().optional(),
+  candidate_group: z.number().nullable().optional(),
+  is_chosen: z.number().nullable().optional(),
   participants: z.array(assignmentParticipantSchema).optional(),
   created_at: z.string().optional(),
   place: assignmentPlaceSchema,
@@ -72,3 +74,9 @@ export const assignmentParticipantsRequestSchema = z.object({
   user_ids: z.array(z.number()),
 });
 export type AssignmentParticipantsRequest = z.infer<typeof assignmentParticipantsRequestSchema>;
+
+/** Group 2+ same-day assignments as candidates for one timeslot (#2). */
+export const candidateGroupCreateRequestSchema = z.object({
+  assignment_ids: z.array(z.number()).min(2),
+});
+export type CandidateGroupCreateRequest = z.infer<typeof candidateGroupCreateRequestSchema>;

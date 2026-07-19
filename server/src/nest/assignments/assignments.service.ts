@@ -77,6 +77,18 @@ export class AssignmentsService {
     return svc.updateTime(id, placeTime as never, endTime as never);
   }
 
+  createCandidateGroup(tripId: string, assignmentIds: number[]) {
+    return svc.createCandidateGroup(tripId, assignmentIds);
+  }
+
+  chooseCandidate(tripId: string, assignmentId: string) {
+    return svc.chooseCandidate(tripId, assignmentId);
+  }
+
+  dissolveCandidateGroup(tripId: string, groupId: string) {
+    return svc.dissolveCandidateGroup(tripId, groupId);
+  }
+
   setParticipants(id: string, userIds: number[]) {
     return svc.setParticipants(id, userIds);
   }

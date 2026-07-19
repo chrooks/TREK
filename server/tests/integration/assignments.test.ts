@@ -47,7 +47,7 @@ import { buildApp } from '../../src/bootstrap';
 import { createTables } from '../../src/db/schema';
 import { runMigrations } from '../../src/db/migrations';
 import { resetTestDb, resetRateLimits } from '../helpers/test-db';
-import { createUser, createTrip, createDay, createPlace, addTripMember, createTag } from '../helpers/factories';
+import { createUser, createTrip, createDay, createPlace, addTripMember, createTag, createDayAssignment } from '../helpers/factories';
 import { authCookie } from '../helpers/auth';
 
 let nestApp: INestApplication;
@@ -388,5 +388,92 @@ describe('Assignment participants', () => {
     // Time is embedded under assignment.place.place_time (COALESCEd from assignment_time)
     expect(update.body.assignment.place.place_time).toBe('14:00');
     expect(update.body.assignment.place.end_time).toBe('16:00');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Candidate groups (#2)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('Candidate groups', () => {
+  async function seedTwoCandidates(userId: number) {
+    const trip = createTrip(testDb, userId);
+    const day = createDay(testDb, trip.id, { date: '2025-06-01' });
+    const placeA = createPlace(testDb, trip.id, { name: 'Restaurant A' });
+    const placeB = createPlace(testDb, trip.id, { name: 'Restaurant B' });
+    const a = createDayAssignment(testDb, day.id, placeA.id);
+    const b = createDayAssignment(testDb, day.id, placeB.id);
+    return { trip, day, a, b };
+  }
+
+  it('CAND-001 — POST /candidate-groups links same-day assignments as one group', async () => {
+    const { user } = createUser(testDb);
+    const { trip, a, b } = await seedTwoCandidates(user.id);
+
+    const res = await request(app)
+      .post(`/api/trips/${trip.id}/assignments/candidate-groups`)
+      .set('Cookie', authCookie(user.id))
+      .send({ assignment_ids: [a.id, b.id] });
+    expect(res.status).toBe(201);
+    const groups = res.body.assignments.map((x: any) => x.candidate_group);
+    expect(new Set(groups).size).toBe(1);
+    expect(groups[0]).toBe(Math.min(a.id, b.id));
+    expect(res.body.assignments.every((x: any) => x.is_chosen === 0)).toBe(true);
+  });
+
+  it('CAND-002 — PUT /:id/choose marks the winner and collapses the rest', async () => {
+    const { user } = createUser(testDb);
+    const { trip, a, b } = await seedTwoCandidates(user.id);
+    await request(app)
+      .post(`/api/trips/${trip.id}/assignments/candidate-groups`)
+      .set('Cookie', authCookie(user.id))
+      .send({ assignment_ids: [a.id, b.id] });
+
+    const res = await request(app)
+      .put(`/api/trips/${trip.id}/assignments/${b.id}/choose`)
+      .set('Cookie', authCookie(user.id))
+      .send({});
+    expect(res.status).toBe(200);
+    const byId = Object.fromEntries(res.body.assignments.map((x: any) => [x.id, x]));
+    expect(byId[b.id].is_chosen).toBe(1);
+    expect(byId[a.id].is_chosen).toBe(0);
+  });
+
+  it('CAND-003 — DELETE /candidate-groups/:groupId dissolves the group', async () => {
+    const { user } = createUser(testDb);
+    const { trip, a, b } = await seedTwoCandidates(user.id);
+    await request(app)
+      .post(`/api/trips/${trip.id}/assignments/candidate-groups`)
+      .set('Cookie', authCookie(user.id))
+      .send({ assignment_ids: [a.id, b.id] });
+
+    const res = await request(app)
+      .delete(`/api/trips/${trip.id}/assignments/candidate-groups/${Math.min(a.id, b.id)}`)
+      .set('Cookie', authCookie(user.id));
+    expect(res.status).toBe(200);
+    expect(res.body.assignments.every((x: any) => x.candidate_group === null && x.is_chosen === 0)).toBe(true);
+  });
+
+  it('CAND-004 — POST rejects cross-day groups and single-member groups', async () => {
+    const { user } = createUser(testDb);
+    const trip = createTrip(testDb, user.id);
+    const day1 = createDay(testDb, trip.id, { date: '2025-06-01' });
+    const day2 = createDay(testDb, trip.id, { date: '2025-06-02' });
+    const placeA = createPlace(testDb, trip.id, { name: 'A' });
+    const placeB = createPlace(testDb, trip.id, { name: 'B' });
+    const a = createDayAssignment(testDb, day1.id, placeA.id);
+    const b = createDayAssignment(testDb, day2.id, placeB.id);
+
+    const crossDay = await request(app)
+      .post(`/api/trips/${trip.id}/assignments/candidate-groups`)
+      .set('Cookie', authCookie(user.id))
+      .send({ assignment_ids: [a.id, b.id] });
+    expect(crossDay.status).toBe(400);
+
+    const single = await request(app)
+      .post(`/api/trips/${trip.id}/assignments/candidate-groups`)
+      .set('Cookie', authCookie(user.id))
+      .send({ assignment_ids: [a.id] });
+    expect(single.status).toBe(400);
   });
 });

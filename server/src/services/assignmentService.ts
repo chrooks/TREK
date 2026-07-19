@@ -40,6 +40,8 @@ export function getAssignmentWithPlace(assignmentId: number | bigint) {
     notes: a.notes,
     assignment_time: a.assignment_time ?? null,
     assignment_end_time: a.assignment_end_time ?? null,
+    candidate_group: a.candidate_group ?? null,
+    is_chosen: a.is_chosen ? 1 : 0,
     participants,
     created_at: a.created_at,
     place: {
@@ -213,4 +215,49 @@ export function setParticipants(assignmentId: string | number, userIds: number[]
     JOIN users u ON ap.user_id = u.id
     WHERE ap.assignment_id = ?
   `).all(assignmentId);
+}
+
+/**
+ * Candidate places (#2): link same-day assignments as alternatives for one
+ * timeslot. The group id is the lowest member id — stable, needs no sequence.
+ * Returns the updated assignments. Throws on members from different days.
+ */
+export function createCandidateGroup(tripId: string | number, assignmentIds: number[]) {
+  const members = assignmentIds
+    .map(id => getAssignmentForTrip(id, tripId))
+    .filter((a): a is NonNullable<typeof a> => Boolean(a));
+  if (members.length !== assignmentIds.length) throw new Error('Assignment not found');
+  const dayIds = new Set(members.map(m => m.day_id));
+  if (dayIds.size !== 1) throw new Error('Candidates must be on the same day');
+
+  // Merging into an existing group keeps that group's id.
+  const groupId = Math.min(...members.map(m => (m as any).candidate_group ?? m.id));
+  const update = db.prepare('UPDATE day_assignments SET candidate_group = ?, is_chosen = 0 WHERE id = ? OR candidate_group = ?');
+  for (const m of members) update.run(groupId, m.id, (m as any).candidate_group ?? -1);
+  return listGroupMembers(groupId);
+}
+
+/** Pick the winner: it stays visible, the rest collapse behind it. */
+export function chooseCandidate(tripId: string | number, assignmentId: string | number) {
+  const assignment = getAssignmentForTrip(assignmentId, tripId) as any;
+  if (!assignment) throw new Error('Assignment not found');
+  if (assignment.candidate_group == null) throw new Error('Assignment is not in a candidate group');
+  db.prepare('UPDATE day_assignments SET is_chosen = CASE WHEN id = ? THEN 1 ELSE 0 END WHERE candidate_group = ?')
+    .run(assignment.id, assignment.candidate_group);
+  return listGroupMembers(assignment.candidate_group);
+}
+
+/** Dissolve a group: members become ordinary independent assignments again. */
+export function dissolveCandidateGroup(tripId: string | number, groupId: string | number) {
+  const members = listGroupMembers(groupId).filter(m =>
+    getAssignmentForTrip((m as any).id, tripId)
+  );
+  if (members.length === 0) throw new Error('Candidate group not found');
+  db.prepare('UPDATE day_assignments SET candidate_group = NULL, is_chosen = 0 WHERE candidate_group = ?').run(groupId);
+  return members.map(m => ({ ...(m as any), candidate_group: null, is_chosen: 0 }));
+}
+
+function listGroupMembers(groupId: string | number) {
+  const rows = db.prepare('SELECT id FROM day_assignments WHERE candidate_group = ? ORDER BY id').all(groupId) as { id: number }[];
+  return rows.map(r => getAssignmentWithPlace(r.id));
 }
