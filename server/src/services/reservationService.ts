@@ -87,6 +87,20 @@ export function resyncReservationDays(tripId: string | number): void {
   }
 }
 
+// A reservation edit can arrive holding ids of rows deleted since the form was
+// opened (the linked assignment removed from a day, a place deleted). The FK
+// would reject the whole update with a raw 500 — null the stale reference
+// instead, mirroring the accommodation_id guard in updateReservation.
+function existingAssignmentId(id: number | null | undefined): number | null {
+  if (!id) return null;
+  return db.prepare('SELECT id FROM day_assignments WHERE id = ?').get(id) ? id : null;
+}
+
+function existingPlaceId(id: number | null | undefined): number | null {
+  if (!id) return null;
+  return db.prepare('SELECT id FROM places WHERE id = ?').get(id) ? id : null;
+}
+
 function saveEndpoints(reservationId: number, endpoints: EndpointInput[]): void {
   // Bind the transaction lazily on each call. Binding at module load time
   // captures the DB connection that was open then, which becomes invalid
@@ -272,8 +286,8 @@ export function createReservation(tripId: string | number, data: CreateReservati
     tripId,
     resolvedDayId,
     resolvedEndDayId,
-    place_id || null,
-    assignment_id || null,
+    existingPlaceId(place_id),
+    existingAssignmentId(assignment_id),
     title,
     reservation_time || null,
     reservation_end_time || null,
@@ -449,8 +463,8 @@ export function updateReservation(id: string | number, tripId: string | number, 
     notes !== undefined ? (notes || null) : current.notes,
     nextDayId,
     nextEndDayId,
-    place_id !== undefined ? (place_id || null) : current.place_id,
-    assignment_id !== undefined ? (assignment_id || null) : current.assignment_id,
+    existingPlaceId(place_id !== undefined ? place_id : current.place_id),
+    existingAssignmentId(assignment_id !== undefined ? assignment_id : current.assignment_id),
     status || null,
     type || null,
     resolvedAccId,

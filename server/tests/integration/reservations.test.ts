@@ -185,6 +185,21 @@ describe('Update reservation', () => {
     expect(res.body.reservation.confirmation_number).toBe('ABC123');
   });
 
+  it('RESV-004c — PUT with a stale assignment_id/place_id nulls them instead of 500ing', async () => {
+    const { user } = createUser(testDb);
+    const trip = createTrip(testDb, user.id);
+    const resv = createReservation(testDb, trip.id, { title: 'Intuit Dome Tour', type: 'tour' });
+
+    // A deleted assignment leaves the modal holding an id that no longer exists.
+    const res = await request(app)
+      .put(`/api/trips/${trip.id}/reservations/${resv.id}`)
+      .set('Cookie', authCookie(user.id))
+      .send({ title: 'Intuit Dome Tour', assignment_id: 99999, place_id: 99999 });
+    expect(res.status).toBe(200);
+    expect(res.body.reservation.assignment_id).toBeNull();
+    expect(res.body.reservation.place_id).toBeNull();
+  });
+
   it('RESV-004b — PUT with day_id null derives day_id from reservation_time so it stays in the Plan (#1237)', async () => {
     const { user } = createUser(testDb);
     const trip = createTrip(testDb, user.id);
