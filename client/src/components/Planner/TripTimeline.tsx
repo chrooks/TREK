@@ -465,6 +465,12 @@ export default function TripTimeline({
     return day.title || date || t('timeline.day', { number: day.day_number ?? index + 1 })
   }
 
+  /** Weekday + date, shown under the title so a named day still says when it is. */
+  const daySubLabel = (day: Day): string | null => {
+    if (!day.title || !day.date) return null
+    return formatDate(day.date, locale)
+  }
+
   if (days.length === 0) {
     return (
       <div id="trip-timeline-empty" className="flex h-full flex-col items-center justify-center gap-3 text-content-muted">
@@ -502,11 +508,16 @@ export default function TripTimeline({
               {/* Day header */}
               <div className="bg-surface border-b border-edge-faint" style={{
                 height: HEADER_HEIGHT, position: 'sticky', top: 0, zIndex: 2,
-                display: 'flex', alignItems: 'center', padding: '0 12px',
+                display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '0 12px',
               }}>
                 <span className="text-content" style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                   {dayLabel(day, dayIndex)}
                 </span>
+                {daySubLabel(day) && (
+                  <span className="text-content-muted" style={{ fontSize: 11, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {daySubLabel(day)}
+                  </span>
+                )}
               </div>
 
               {/* Unscheduled strip — drag a chip into the grid to give it a time,
