@@ -9,7 +9,7 @@ import { isAddonEnabled } from '../services/adminService';
 import { ADDON_IDS } from '../addons';
 import { registerResources } from './resources';
 import { registerTools } from './tools';
-import { McpSession, sessions, revokeUserSessions, revokeUserSessionsForClient } from './sessionManager';
+import { McpSession, sessions, closeSession, revokeUserSessions, revokeUserSessionsForClient } from './sessionManager';
 import { writeAudit, getClientIp } from '../services/auditLog';
 import { getMcpSafeUrl } from '../services/notifications';
 
@@ -120,23 +120,32 @@ function isRateLimited(userId: number, clientId: string | null): boolean {
   return entry.count > RATE_LIMIT_MAX;
 }
 
-function countSessionsForUser(userId: number): number {
-  const cutoff = Date.now() - SESSION_TTL_MS;
-  let count = 0;
-  for (const session of sessions.values()) {
-    if (session.userId === userId && session.lastActivity >= cutoff) count++;
+/**
+ * Enforce the per-user session cap by evicting least-recently-used sessions.
+ *
+ * Clients (claude.ai connector, mcp-remote) reconnect by opening a NEW session and
+ * almost never send the DELETE that terminates the old one — and every retry on a
+ * still-known session id restamps lastActivity, so orphans can stay "fresh" forever
+ * and the idle sweep never reclaims them. Rejecting the connect at the cap therefore
+ * locks out the only client that could have recovered the slots. Evict instead.
+ */
+export function evictOverCap(userId: number): void {
+  const owned = [...sessions.entries()]
+      .filter(([, s]) => s.userId === userId)
+      .sort((a, b) => a[1].lastActivity - b[1].lastActivity);
+  for (const [sid] of owned.slice(0, owned.length - MAX_SESSIONS_PER_USER + 1)) {
+    console.log(`[MCP] Session ${sid} evicted (user ${userId} at cap ${MAX_SESSIONS_PER_USER})`);
+    closeSession(sid);
   }
-  return count;
 }
 
 const sessionSweepInterval = setInterval(() => {
-  const cutoff = Date.now() - SESSION_TTL_MS;
+  const now = Date.now();
+  const cutoff = now - SESSION_TTL_MS;
   let cleaned = 0;
   for (const [sid, session] of sessions) {
     if (session.lastActivity < cutoff) {
-      try { session.server.close(); } catch { /* ignore */ }
-      try { session.transport.close(); } catch { /* ignore */ }
-      sessions.delete(sid);
+      closeSession(sid);
       cleaned++;
     }
   }
@@ -145,7 +154,11 @@ const sessionSweepInterval = setInterval(() => {
     if (entry.windowStart < rateCutoff) rateLimitMap.delete(key);
   }
   if (cleaned > 0 || sessions.size > 0) {
-    console.log(`[MCP] Session sweep: cleaned ${cleaned}, active ${sessions.size}`);
+    // Who holds each slot, so the next "sessions are full" is diagnosable without a restart.
+    const held = [...sessions.entries()]
+        .map(([sid, s]) => `${sid.slice(0, 8)}/u${s.userId}/${s.clientId ?? 'native'}/${Math.round((now - s.lastActivity) / 60000)}m`)
+        .join(' ');
+    console.log(`[MCP] Session sweep: cleaned ${cleaned}, active ${sessions.size} [${held}]`);
   }
 }, 60 * 1000); // sweep every 1 minute
 
@@ -272,10 +285,7 @@ export async function mcpHandler(req: Request, res: Response): Promise<void> {
     return;
   }
 
-  if (countSessionsForUser(user.id) >= MAX_SESSIONS_PER_USER) {
-    res.status(429).json({ error: 'Session limit reached. Close an existing session before opening a new one.' });
-    return;
-  }
+  evictOverCap(user.id);
 
   // Create a new per-user MCP server and session
   const server = new McpServer(
@@ -313,9 +323,14 @@ export async function mcpHandler(req: Request, res: Response): Promise<void> {
       console.log(`[MCP] Session ${sid} created for user ${user.id} [${authMethod}]. Active sessions: ${sessions.size}`);
     },
     onsessionclosed: (sid) => {
-      sessions.delete(sid);
+      closeSession(sid);
     },
   });
+  // A dropped/closed transport frees its slot immediately — DELETE and the idle
+  // sweep are not the only ways a session dies.
+  transport.onclose = () => {
+    if (transport.sessionId) closeSession(transport.sessionId);
+  };
 
   logToolCallAudit(req, user.id, clientId);
   try {
@@ -331,21 +346,14 @@ export async function mcpHandler(req: Request, res: Response): Promise<void> {
 
 /** Invalidate all active MCP sessions (call when addon state changes so sessions re-create with updated tools). */
 export function invalidateMcpSessions(): void {
-  for (const [sid, session] of sessions) {
-    try { session.server.close(); } catch { /* ignore */ }
-    try { session.transport.close(); } catch { /* ignore */ }
-    sessions.delete(sid);
-  }
+  for (const sid of sessions.keys()) closeSession(sid);
   console.log('[MCP] All sessions invalidated due to addon state change');
 }
 
 /** Close all active MCP sessions (call during graceful shutdown). */
 export function closeMcpSessions(): void {
   clearInterval(sessionSweepInterval);
-  for (const [, session] of sessions) {
-    try { session.server.close(); } catch { /* ignore */ }
-    try { session.transport.close(); } catch { /* ignore */ }
-  }
+  for (const sid of sessions.keys()) closeSession(sid);
   sessions.clear();
   rateLimitMap.clear();
 }

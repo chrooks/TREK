@@ -53,7 +53,8 @@ import { resetTestDb, resetRateLimits } from '../helpers/test-db';
 import { createUser } from '../helpers/factories';
 import { generateToken } from '../helpers/auth';
 import { createMcpToken } from '../helpers/factories';
-import { closeMcpSessions } from '../../src/mcp/index';
+import { closeMcpSessions, evictOverCap } from '../../src/mcp/index';
+import { sessions, type McpSession } from '../../src/mcp/sessionManager';
 
 let nestApp: INestApplication;
 let app: Application;
@@ -208,24 +209,53 @@ describe('MCP session management', () => {
     return sessionId as string;
   }
 
-  it('MCP-003 — session limit of 5 per user', async () => {
+  /** A session slot held by a client that will never disconnect or send DELETE. */
+  function stubSession(userId: number, lastActivity: number): McpSession {
+    return {
+      server: { close: () => {} },
+      transport: { close: () => {} },
+      userId,
+      scopes: null,
+      clientId: 'abandoner',
+      isStaticToken: false,
+      lastActivity,
+    } as unknown as McpSession;
+  }
+
+  it('MCP-003 — at the per-user cap, the least-recently-used session is evicted', () => {
+    const { user } = createUser(testDb);
+
+    // Arrange: 20 orphaned slots, all inside the idle TTL, so the sweep will never reclaim them
+    const now = Date.now();
+    for (let i = 0; i < 20; i++) {
+      sessions.set(`stub-${i}`, stubSession(user.id, now - (20 - i) * 1000));
+    }
+    sessions.set('other-user', stubSession(user.id + 9999, now - 999999));
+
+    // Act: the connect that used to be rejected with 429
+    evictOverCap(user.id);
+
+    // Assert: exactly one slot freed, and it is the oldest — other users are untouched
+    const mine = [...sessions.keys()].filter((k) => k.startsWith('stub-'));
+    expect(mine).toHaveLength(19);
+    expect(mine).not.toContain('stub-0');
+    expect(sessions.has('other-user')).toBe(true);
+  });
+
+  it('MCP-003b — a client that reconnects without DELETE is never locked out', async () => {
     const { user } = createUser(testDb);
     testDb.prepare("UPDATE addons SET enabled = 1 WHERE id = 'mcp'").run();
 
-    // Create 5 sessions
+    // Arrange: cap already full of orphans
+    const now = Date.now();
     for (let i = 0; i < 20; i++) {
-      await createSession(user.id);
+      sessions.set(`orphan-${i}`, stubSession(user.id, now - (20 - i) * 1000));
     }
 
-    // 6th should fail
-    const token = generateToken(user.id);
-    const res = await request(app)
-      .post('/mcp')
-      .set('Authorization', `Bearer ${token}`)
-      .set('Accept', 'application/json, text/event-stream')
-      .send({ jsonrpc: '2.0', method: 'initialize', id: 1, params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'test', version: '1' } } });
-    expect(res.status).toBe(429);
-    expect(res.body.error).toMatch(/session limit/i);
+    // Act + Assert: the new connect succeeds instead of returning 429
+    const sessionId = await createSession(user.id);
+    expect(sessionId).toBeTruthy();
+    expect(sessions.has('orphan-0')).toBe(false);
   });
 
   it('MCP — session resumption with valid mcp-session-id', async () => {

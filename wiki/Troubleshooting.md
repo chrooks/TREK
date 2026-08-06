@@ -279,9 +279,11 @@ Restart the container after adding the variable. Once set, clicking **Connect** 
 
 ---
 
-## MCP integration: "Too many requests" or "Session limit reached"
+## MCP integration: "Too many requests"
 
-**Cause:** Each user is limited to 300 MCP requests per minute and 20 concurrent sessions by default. Exceeding either limit returns a `429` response.
+**Cause:** Each user is limited to 300 MCP requests per minute by default. Exceeding it returns a `429` response.
+
+Concurrent sessions are capped too (20 per user), but that cap no longer rejects anything: a new connection at the cap evicts the least recently used session. If you want to see which sessions hold the slots, the once-a-minute `[MCP] Session sweep:` line in the server log lists each one with its user, client, and idle time.
 
 **Fix:** Increase the limits via environment variables:
 

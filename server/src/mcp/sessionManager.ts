@@ -16,14 +16,19 @@ export interface McpSession {
 
 export const sessions = new Map<string, McpSession>();
 
+/** Close a session's server + transport and drop it from the registry. Safe to call twice. */
+export function closeSession(sid: string): void {
+  const session = sessions.get(sid);
+  sessions.delete(sid);
+  if (!session) return;
+  try { session.server.close(); } catch { /* ignore */ }
+  try { session.transport.close(); } catch { /* ignore */ }
+}
+
 /** Terminate all active MCP sessions for a specific user (e.g. on token revocation). */
 export function revokeUserSessions(userId: number): void {
   for (const [sid, session] of sessions) {
-    if (session.userId === userId) {
-      try { session.server.close(); } catch { /* ignore */ }
-      try { session.transport.close(); } catch { /* ignore */ }
-      sessions.delete(sid);
-    }
+    if (session.userId === userId) closeSession(sid);
   }
 }
 
@@ -32,10 +37,6 @@ export function revokeUserSessions(userId: number): void {
  *  sessions are closed, not sessions from other clients for the same user. */
 export function revokeUserSessionsForClient(userId: number, clientId: string): void {
   for (const [sid, session] of sessions) {
-    if (session.userId === userId && session.clientId === clientId) {
-      try { session.server.close(); } catch { /* ignore */ }
-      try { session.transport.close(); } catch { /* ignore */ }
-      sessions.delete(sid);
-    }
+    if (session.userId === userId && session.clientId === clientId) closeSession(sid);
   }
 }
