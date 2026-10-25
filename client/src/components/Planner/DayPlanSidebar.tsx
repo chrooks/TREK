@@ -74,6 +74,8 @@ interface DayPlanSidebarProps {
   onAddPlace?: () => void
   onAddPlaceToDay?: (placeId: number, dayId: number) => void
   onExpandedDaysChange?: (expandedDayIds: Set<number>) => void
+  /** Increment to expand every day (e.g. from the map's hidden-places signifier). */
+  expandAllNonce?: number
   pushUndo?: (label: string, undoFn: () => Promise<void> | void) => void
   canUndo?: boolean
   lastActionLabel?: string | null
@@ -117,6 +119,7 @@ function useDayPlanSidebar(props: DayPlanSidebarProps) {
   onToggleRoute,
   onSetRouteProfile,
   onExpandedDaysChange,
+  expandAllNonce = 0,
   pushUndo,
   canUndo = false,
   lastActionLabel = null,
@@ -148,6 +151,12 @@ function useDayPlanSidebar(props: DayPlanSidebarProps) {
     return new Set<number>(days.map(d => d.id))
   })
   useEffect(() => { onExpandedDaysChange?.(expandedDays) }, [expandedDays])
+  useEffect(() => {
+    if (!expandAllNonce) return
+    const all = new Set<number>(days.map(d => d.id))
+    setExpandedDays(all)
+    try { sessionStorage.setItem(`day-expanded-${tripId}`, JSON.stringify([...all])) } catch {}
+  }, [expandAllNonce]) // eslint-disable-line react-hooks/exhaustive-deps
   const [editingDayId, setEditingDayId] = useState(null)
   const [editTitle, setEditTitle] = useState('')
   const [isCalculating, setIsCalculating] = useState(false)

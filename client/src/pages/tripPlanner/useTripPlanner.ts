@@ -250,7 +250,7 @@ export function useTripPlanner() {
 
   const [expandedDayIds, setExpandedDayIds] = useState<Set<number> | null>(null)
 
-  const mapPlaces = useMemo(() => {
+  const { mapPlaces, hiddenByCollapsedDays } = useMemo(() => {
     // Build set of place IDs assigned to collapsed days
     const hiddenPlaceIds = new Set<number>()
     if (expandedDayIds) {
@@ -276,7 +276,7 @@ export function useTripPlanner() {
       ? new Set(Object.values(assignments).flatMap(da => da.map(a => a.place?.id).filter(Boolean)))
       : null
 
-    return places.filter(p => {
+    const visible = places.filter(p => {
       if (!p.lat || !p.lng) return false
       if (mapPlacesFilter === 'tracks' && !p.route_geometry) return false
       if (mapCategoryFilter.size > 0) {
@@ -284,11 +284,18 @@ export function useTripPlanner() {
           if (!mapCategoryFilter.has('uncategorized')) return false
         } else if (!mapCategoryFilter.has(String(p.category_id))) return false
       }
-      if (hiddenPlaceIds.has(p.id)) return false
       if (plannedIds && plannedIds.has(p.id)) return false
       return true
     })
+    const mapPlaces = visible.filter(p => !hiddenPlaceIds.has(p.id))
+    // Places the sidebar's collapsed days took off the map; the map shows a
+    // signifier for them so the marker count never silently disagrees with the list.
+    return { mapPlaces, hiddenByCollapsedDays: visible.length - mapPlaces.length }
   }, [places, mapCategoryFilter, mapPlacesFilter, assignments, expandedDayIds])
+  // ponytail: a counter prop tells DayPlanSidebar (which owns expandedDays) to expand all;
+  // lift the state into this hook if a second caller ever needs to drive it.
+  const [expandAllDaysNonce, setExpandAllDaysNonce] = useState(0)
+  const expandAllDays = useCallback(() => setExpandAllDaysNonce(n => n + 1), [])
 
   const { route, routeSegments, routeInfo, setRoute, setRouteInfo, updateRouteForDay } = useRouteCalculation({ assignments } as any, selectedDayId, routeShown, routeProfile, tripAccommodations)
 
@@ -699,7 +706,7 @@ export function useTripPlanner() {
     deletePlaceId, setDeletePlaceId, deletePlaceIds, setDeletePlaceIds,
     visibleConnections, setVisibleConnections, toggleConnection, mapTransportDetail, setMapTransportDetail,
     isMobile, mapCategoryFilter, setMapCategoryFilter, mapPlacesFilter, setMapPlacesFilter,
-    expandedDayIds, setExpandedDayIds, mapPlaces,
+    expandedDayIds, setExpandedDayIds, mapPlaces, hiddenByCollapsedDays, expandAllDaysNonce, expandAllDays,
     route, routeSegments, routeInfo, setRoute, setRouteInfo, updateRouteForDay,
     handleSelectDay, handlePlaceClick, handleMarkerClick, handleMapClick, handleMapContextMenu, openAddPlaceFromPoi,
     handleSavePlace, openPlaceEditor, handleDeletePlace, confirmDeletePlace, confirmDeletePlaces,

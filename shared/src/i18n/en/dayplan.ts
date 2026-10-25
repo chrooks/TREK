@@ -15,6 +15,8 @@ const dayplan: TranslationStrings = {
   'dayplan.addNote': 'Add Note',
   'dayplan.expandAll': 'Expand all days',
   'dayplan.collapseAll': 'Collapse all days',
+  'dayplan.hiddenByCollapsed': '{n} places hidden by collapsed days',
+  'dayplan.showAllPlaces': 'Show all',
   'dayplan.editNote': 'Edit Note',
   'dayplan.noteAdd': 'Add Note',
   'dayplan.noteEdit': 'Edit Note',

@@ -15,6 +15,8 @@ const dayplan: TranslationStrings = {
   'dayplan.addNote': 'Notiz hinzufügen',
   'dayplan.expandAll': 'Alle Tage ausklappen',
   'dayplan.collapseAll': 'Alle Tage einklappen',
+  'dayplan.hiddenByCollapsed': '{n} Orte durch eingeklappte Tage ausgeblendet',
+  'dayplan.showAllPlaces': 'Alle anzeigen',
   'dayplan.editNote': 'Notiz bearbeiten',
   'dayplan.noteAdd': 'Notiz hinzufügen',
   'dayplan.noteEdit': 'Notiz bearbeiten',
